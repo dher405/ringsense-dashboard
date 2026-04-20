@@ -77,3 +77,5 @@ export const subscribeWebhook = (webhookUrl) => api('/api/webhook/subscribe', { 
 export const unsubscribeWebhook = () => api('/api/webhook/subscribe', { method: 'DELETE' });
 export const getWebhookStatus = () => api('/api/webhook/status');
 export const clearInteractions = () => api('/api/interactions', { method: 'DELETE' });
+export const listAllSubscriptions = () => api('/api/webhook/subscriptions');
+export const deleteAllSubscriptions = () => api('/api/webhook/subscriptions/all', { method: 'DELETE' });

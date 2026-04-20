@@ -476,6 +476,33 @@ function SettingsPage() {
                   </button>
                 )}
               </div>
+
+              <div className="schedule-status-card" style={{marginTop: 20}}>
+                <h4>Subscription Cleanup</h4>
+                <p style={{fontSize: 12, color: 'var(--text-muted)', marginBottom: 12}}>
+                  If you switched accounts and old subscriptions are still sending events, use these tools to find and delete all subscriptions on the currently authenticated account.
+                </p>
+                <div className="form-actions-row">
+                  <button className="btn btn-secondary" onClick={async () => {
+                    try {
+                      const res = await API.listAllSubscriptions();
+                      showStatus('info', `Found ${res.total} subscription(s) on this account: ${res.subscriptions.map(s => `${s.id} (${s.status})`).join(', ') || 'none'}`);
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.search} List All Subscriptions
+                  </button>
+                  <button className="btn btn-secondary" style={{borderColor: 'rgba(239,68,68,0.4)', color: '#FCA5A5'}} onClick={async () => {
+                    if (!window.confirm('Delete ALL webhook subscriptions on the current account? This cannot be undone.')) return;
+                    try {
+                      const res = await API.deleteAllSubscriptions();
+                      showStatus('success', res.message);
+                      loadSchedule();
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.x} Delete All Subscriptions on Account
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

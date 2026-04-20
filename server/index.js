@@ -157,6 +157,14 @@ app.delete('/api/config', adminAuth, (req, res) => {
 app.post('/api/rc/test', adminAuth, async (req, res) => {
   try {
     await getAccessToken();
+    // Fetch and store the account ID for webhook filtering
+    try {
+      const acct = await rcApiFetch('/restapi/v1.0/account/~');
+      if (acct.id) {
+        setConfig({ rc_account_id: String(acct.id) });
+        console.log(`[AUTH] Account ID stored: ${acct.id}`);
+      }
+    } catch {}
     res.json({ success: true, message: 'Successfully authenticated with RingCentral API.' });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -339,7 +347,25 @@ app.post('/api/webhook/ringsense', express.json(), (req, res) => {
 
   try {
     const event = req.body;
-    console.log(`[WEBHOOK] RingSense event: ${event.event || 'unknown'}, domain: ${event.body?.domain || 'unknown'}`);
+    console.log(`[WEBHOOK] RingSense event: ${event.event || 'unknown'}, domain: ${event.body?.domain || 'unknown'}, owner: ${event.ownerId || 'unknown'}`);
+
+    // Account filter: check if the event's account matches our configured account
+    // The event URL contains the account ID: /ai/ringsense/v1/public/accounts/ACCOUNT_ID/...
+    const config = getConfig();
+    const configuredClientId = config.rc_client_id;
+    const eventPath = event.event || '';
+    const eventAccountMatch = eventPath.match(/accounts\/(\d+)\//);
+    const eventAccountId = eventAccountMatch ? eventAccountMatch[1] : null;
+
+    // Also check ownerId from the event
+    const eventOwnerId = event.ownerId;
+
+    // If we have a stored account ID from a previous successful API call, filter on it
+    const storedAccountId = config.rc_account_id;
+    if (storedAccountId && eventAccountId && eventAccountId !== storedAccountId) {
+      console.log(`[WEBHOOK] REJECTED — event account ${eventAccountId} does not match configured account ${storedAccountId}`);
+      return res.status(200).json({ received: true, filtered: true });
+    }
 
     if (event.body) {
       const record = storeInteraction(event);
@@ -430,6 +456,45 @@ app.delete('/api/webhook/subscribe', adminAuth, async (req, res) => {
       setConfig({ webhook_subscription_id: null, webhook_url: null });
     }
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List ALL subscriptions on the current account
+app.get('/api/webhook/subscriptions', adminAuth, async (req, res) => {
+  try {
+    const data = await rcApiFetch('/restapi/v1.0/subscription');
+    const subs = (data.records || []).map(s => ({
+      id: s.id,
+      status: s.status,
+      creationTime: s.creationTime,
+      expirationTime: s.expirationTime,
+      deliveryMode: s.deliveryMode,
+      eventFilters: s.eventFilters,
+    }));
+    res.json({ subscriptions: subs, total: subs.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete ALL subscriptions on the current account (nuclear option)
+app.delete('/api/webhook/subscriptions/all', adminAuth, async (req, res) => {
+  try {
+    const data = await rcApiFetch('/restapi/v1.0/subscription');
+    const subs = data.records || [];
+    const results = [];
+    for (const sub of subs) {
+      try {
+        await rcApiFetch(`/restapi/v1.0/subscription/${sub.id}`, { method: 'DELETE' });
+        results.push({ id: sub.id, deleted: true });
+      } catch (err) {
+        results.push({ id: sub.id, deleted: false, error: err.message });
+      }
+    }
+    setConfig({ webhook_subscription_id: null, webhook_url: null });
+    res.json({ success: true, results, message: `Deleted ${results.filter(r=>r.deleted).length} of ${subs.length} subscriptions.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
