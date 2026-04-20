@@ -69,7 +69,11 @@ function AdminLogin() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [ssoEnabled, setSsoEnabled] = useState(false);
-  const [mode, setMode] = useState('email'); // 'email' or 'legacy'
+  const [mode, setMode] = useState('email');
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false); // 'email' or 'legacy'
 
   useEffect(() => {
     // Check SSO availability
@@ -155,10 +159,146 @@ function AdminLogin() {
             {loading ? <span className="spinner" /> : Icons.shield}
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+          {mode === 'email' && (
+            <div style={{textAlign: 'center', marginTop: 12}}>
+              <button type="button" className="btn-link" onClick={() => setShowForgot(true)}>Forgot your password?</button>
+            </div>
+          )}
         </form>
         <div className="login-footer">
           <p style={{fontSize: 12, color: 'var(--text-muted)'}}>All credentials encrypted with AES-256-GCM • Passwords hashed with PBKDF2</p>
         </div>
+
+        {showForgot && (
+          <div className="forgot-overlay">
+            <div className="forgot-card">
+              <h3 style={{fontSize: 16, fontWeight: 600, marginBottom: 8}}>Reset Password</h3>
+              {forgotSent ? (
+                <>
+                  <p style={{color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5, marginBottom: 16}}>
+                    If an account with that email exists, a password reset link has been sent. Check your inbox.
+                  </p>
+                  <button className="btn btn-secondary btn-full" onClick={() => { setShowForgot(false); setForgotSent(false); setForgotEmail(''); }}>
+                    Back to Login
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p style={{color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5, marginBottom: 16}}>
+                    Enter your email address and we'll send you a link to reset your password.
+                  </p>
+                  {error && <div className="error-banner">{error}</div>}
+                  <div className="form-group">
+                    <label>Email</label>
+                    <input type="email" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} placeholder="you@company.com" autoFocus />
+                  </div>
+                  <div style={{display: 'flex', gap: 8}}>
+                    <button className="btn btn-primary" style={{flex: 1}} disabled={forgotLoading} onClick={async () => {
+                      if (!forgotEmail) { setError('Enter your email address.'); return; }
+                      setForgotLoading(true); setError('');
+                      try {
+                        await API.forgotPassword(forgotEmail);
+                        setForgotSent(true);
+                      } catch (err) { setError(err.message); }
+                      finally { setForgotLoading(false); }
+                    }}>
+                      {forgotLoading ? <span className="spinner" /> : null}
+                      {forgotLoading ? 'Sending...' : 'Send Reset Link'}
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => { setShowForgot(false); setError(''); }}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Reset Password Page ─────────────────────────────────────────────────────
+function ResetPasswordPage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const token = searchParams.get('token') || '';
+  const [password, setPasswordVal] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [tokenValid, setTokenValid] = useState(false);
+  const [userInfo, setUserInfo] = useState(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await API.verifyResetToken(token);
+        setTokenValid(res.valid);
+        if (res.valid) setUserInfo(res);
+      } catch {}
+      finally { setLoading(false); }
+    })();
+  }, [token]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    setSubmitting(true); setError('');
+    try {
+      await API.resetPasswordApi(token, password);
+      setSuccess(true);
+    } catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  if (loading) return <div className="login-container"><div className="spinner-lg" /></div>;
+
+  return (
+    <div className="login-container">
+      <div className="login-card">
+        <div className="login-header">
+          <div className="login-icon">{Icons.lock}</div>
+          <h2>Reset Password</h2>
+        </div>
+
+        {!tokenValid ? (
+          <>
+            <div className="error-banner">This reset link is invalid or has expired. Please request a new one.</div>
+            <button className="btn btn-primary btn-full" onClick={() => navigate('/')}>Back to Login</button>
+          </>
+        ) : success ? (
+          <>
+            <div className="status-banner success" style={{marginBottom: 16}}>
+              {Icons.check}
+              <span>Password updated successfully!</span>
+            </div>
+            <button className="btn btn-primary btn-full" onClick={() => navigate('/')}>Sign In</button>
+          </>
+        ) : (
+          <>
+            {userInfo && <p style={{color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center', marginBottom: 16}}>Resetting password for {userInfo.email}</p>}
+            {error && <div className="error-banner">{error}</div>}
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>New Password</label>
+                <input type="password" value={password} onChange={e => setPasswordVal(e.target.value)} placeholder="At least 6 characters" autoFocus />
+              </div>
+              <div className="form-group">
+                <label>Confirm Password</label>
+                <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Confirm new password" />
+              </div>
+              <button className="btn btn-primary btn-full" type="submit" disabled={submitting}>
+                {submitting ? <span className="spinner" /> : Icons.check}
+                {submitting ? 'Updating...' : 'Update Password'}
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );
@@ -216,6 +356,12 @@ function SettingsPage() {
     sp_use_sso_creds: 'true',
     schedule_sftp_enabled: 'true',
     schedule_sharepoint_enabled: 'true',
+    smtp_host: '',
+    smtp_port: '587',
+    smtp_user: '',
+    smtp_pass: '',
+    smtp_from: '',
+    smtp_secure: 'false',
   });
 
   const loadConfig = useCallback(async () => {
@@ -259,6 +405,12 @@ function SettingsPage() {
         sp_use_sso_creds: data.sp_use_sso_creds || 'true',
         schedule_sftp_enabled: data.schedule_sftp_enabled || 'true',
         schedule_sharepoint_enabled: data.schedule_sharepoint_enabled || 'true',
+        smtp_host: data.smtp_host || '',
+        smtp_port: data.smtp_port || '587',
+        smtp_user: data.smtp_user || '',
+        smtp_pass: data.smtp_pass || '',
+        smtp_from: data.smtp_from || '',
+        smtp_secure: data.smtp_secure || 'false',
       }));
     } catch (err) {
       setStatus({ type: 'error', message: err.message });
@@ -407,6 +559,7 @@ function SettingsPage() {
     { key: 'sharepoint', label: 'SharePoint', icon: Icons.upload },
     { key: 'schedule', label: 'Scheduled Uploads', icon: Icons.calendar },
     { key: 'users', label: 'User Accounts', icon: Icons.users },
+    { key: 'email', label: 'Email / SMTP', icon: Icons.server },
     { key: 'sso', label: 'Azure SSO', icon: Icons.shield },
   ];
 
@@ -449,6 +602,7 @@ function SettingsPage() {
               {s.key === 'sharepoint' && config.sp_site_id && <span className="nav-badge configured">Configured</span>}
               {s.key === 'schedule' && scheduleStatus.active && <span className="nav-badge active-badge">Active</span>}
               {s.key === 'sso' && config.sso_enabled === 'true' && <span className="nav-badge configured">Enabled</span>}
+              {s.key === 'email' && config.smtp_host && <span className="nav-badge configured">Configured</span>}
               {s.key === 'users' && users.length > 0 && <span className="nav-badge configured">{users.length}</span>}
             </button>
           ))}
@@ -1117,6 +1271,102 @@ function SettingsPage() {
             </div>
           )}
 
+          {/* ─── Email / SMTP Section ────────────────────────────────────── */}
+          {activeSection === 'email' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h3>Email / SMTP Configuration</h3>
+                <p>Configure outbound email for password reset links. Supports any SMTP server (Gmail, Outlook 365, SendGrid, Amazon SES, etc.).</p>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>SMTP Host</label>
+                  <input type="text" value={form.smtp_host} onChange={e => updateField('smtp_host', e.target.value)} placeholder="smtp.office365.com" />
+                </div>
+                <div className="form-group form-group-sm" style={{flex: '0 0 100px'}}>
+                  <label>Port</label>
+                  <input type="text" value={form.smtp_port} onChange={e => updateField('smtp_port', e.target.value)} placeholder="587" />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Username</label>
+                <input type="text" value={form.smtp_user} onChange={e => updateField('smtp_user', e.target.value)} placeholder="your-email@company.com" />
+              </div>
+
+              <div className="form-group">
+                <label>
+                  Password / App Password
+                  {config.smtp_pass_set && <span className="field-encrypted">Encrypted</span>}
+                </label>
+                <input type="password" value={form.smtp_pass} onChange={e => updateField('smtp_pass', e.target.value)} placeholder={config.smtp_pass_set ? 'Leave blank to keep current' : 'SMTP password or app password'} />
+                <span className="form-hint">For Office 365 / Gmail, use an App Password if MFA is enabled</span>
+              </div>
+
+              <div className="form-group">
+                <label>From Address (optional)</label>
+                <input type="text" value={form.smtp_from} onChange={e => updateField('smtp_from', e.target.value)} placeholder="noreply@company.com (defaults to username)" />
+              </div>
+
+              <div className="schedule-toggle" style={{marginBottom: 16}}>
+                <label className="toggle-label">
+                  <div className={`toggle-switch ${form.smtp_secure === 'true' ? 'on' : ''}`} onClick={() => updateField('smtp_secure', form.smtp_secure === 'true' ? 'false' : 'true')}>
+                    <div className="toggle-knob" />
+                  </div>
+                  <div>
+                    <strong>Use SSL/TLS (port 465)</strong>
+                    <p>Enable for direct SSL connections. Leave off for STARTTLS (port 587).</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="form-actions-row">
+                <button className="btn btn-primary" onClick={async () => {
+                  setSaving(true);
+                  try {
+                    const updates = {
+                      smtp_host: form.smtp_host,
+                      smtp_port: form.smtp_port,
+                      smtp_user: form.smtp_user,
+                      smtp_from: form.smtp_from,
+                      smtp_secure: form.smtp_secure,
+                    };
+                    if (form.smtp_pass && !form.smtp_pass.startsWith('••••')) {
+                      updates.smtp_pass = form.smtp_pass;
+                    }
+                    await API.updateConfig(updates);
+                    showStatus('success', 'SMTP configuration saved.');
+                    loadConfig();
+                  } catch (err) { showStatus('error', err.message); }
+                  finally { setSaving(false); }
+                }} disabled={saving}>
+                  {saving ? <span className="spinner" /> : Icons.check}
+                  Save SMTP Config
+                </button>
+                <button className="btn btn-secondary" onClick={async () => {
+                  showStatus('info', 'Testing SMTP connection...');
+                  try {
+                    const res = await API.testSmtp();
+                    showStatus('success', res.message);
+                  } catch (err) { showStatus('error', err.message); }
+                }}>
+                  {Icons.play} Test Connection
+                </button>
+              </div>
+
+              <div className="schedule-status-card" style={{marginTop: 20}}>
+                <h4>Common SMTP Settings</h4>
+                <div style={{fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8}}>
+                  <p><strong>Office 365:</strong> smtp.office365.com, port 587, STARTTLS</p>
+                  <p><strong>Gmail:</strong> smtp.gmail.com, port 587, STARTTLS (use App Password)</p>
+                  <p><strong>SendGrid:</strong> smtp.sendgrid.net, port 587, user: apikey</p>
+                  <p><strong>Amazon SES:</strong> email-smtp.us-east-1.amazonaws.com, port 587</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ─── Azure SSO Section ───────────────────────────────────────── */}
           {activeSection === 'sso' && (
             <div className="settings-section">
@@ -1567,6 +1817,7 @@ function App() {
             <Route path="/" element={isAuth ? <CallList /> : <AdminLogin />} />
             <Route path="/settings" element={isAuth ? <SettingsPage /> : <AdminLogin />} />
             <Route path="/call" element={isAuth ? <CallDetail /> : <AdminLogin />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
           </Routes>
         </div>
       </Router>

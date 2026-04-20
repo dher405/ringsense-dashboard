@@ -15,6 +15,7 @@ const SENSITIVE_FIELDS = [
   'sso_client_secret',
   'sp_client_secret',
   'sp_graph_token',
+  'smtp_pass',
 ];
 
 function ensureDir() {

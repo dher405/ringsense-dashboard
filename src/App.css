@@ -436,6 +436,26 @@ html, body {
   .radio-group { flex-direction: column; }
 }
 
+/* ─── Link Button ────────────────────────────────────────────────────────── */
+.btn-link {
+  background: none; border: none; color: var(--accent);
+  font-family: var(--font-body); font-size: 13px; cursor: pointer;
+  padding: 0; text-decoration: none;
+}
+.btn-link:hover { text-decoration: underline; }
+
+/* ─── Forgot Password Overlay ────────────────────────────────────────────── */
+.forgot-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200; padding: 16px;
+}
+.forgot-card {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 28px; max-width: 400px; width: 100%;
+  box-shadow: var(--shadow-lg);
+}
+
 /* ─── SSO Button ─────────────────────────────────────────────────────────── */
 .btn-sso {
   background: var(--bg-elevated); color: var(--text-primary);

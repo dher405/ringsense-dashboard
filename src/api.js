@@ -51,6 +51,14 @@ export const createUserApi = (data) => api('/api/users', { method: 'POST', body:
 export const updateUserApi = (userId, data) => api(`/api/users/${userId}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteUserApi = (userId) => api(`/api/users/${userId}`, { method: 'DELETE' });
 
+// Password Reset (no auth required)
+export const forgotPassword = (email) => api('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+export const verifyResetToken = (token) => api(`/api/auth/verify-reset-token?token=${token}`);
+export const resetPasswordApi = (token, password) => api('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
+
+// SMTP
+export const testSmtp = () => api('/api/smtp/test', { method: 'POST' });
+
 // Config
 export const getConfig = () => api('/api/config');
 export const updateConfig = (updates) => api('/api/config', { method: 'PUT', body: JSON.stringify(updates) });

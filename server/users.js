@@ -176,8 +176,50 @@ function isLegacyMode() {
 }
 
 function sanitizeUser(user) {
-  const { passwordHash, ...safe } = user;
+  const { passwordHash, resetToken, resetTokenExpiry, ...safe } = user;
   return safe;
+}
+
+// ─── Password Reset Tokens ───────────────────────────────────────────────────
+function generateResetToken(email) {
+  const users = loadUsers();
+  const idx = users.findIndex(u => u.email === email.toLowerCase().trim());
+  if (idx < 0) return null;
+  if (!users[idx].enabled) return null;
+  if (!users[idx].passwordHash) return null;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  users[idx].resetToken = crypto.createHash('sha256').update(token).digest('hex');
+  users[idx].resetTokenExpiry = Date.now() + 60 * 60 * 1000;
+  saveUsers(users);
+
+  return { token, user: sanitizeUser(users[idx]) };
+}
+
+function verifyResetToken(token) {
+  if (!token) return null;
+  const hashed = crypto.createHash('sha256').update(token).digest('hex');
+  const users = loadUsers();
+  const user = users.find(u => u.resetToken === hashed && u.resetTokenExpiry > Date.now());
+  return user ? sanitizeUser(user) : null;
+}
+
+function resetPassword(token, newPassword) {
+  if (!token || !newPassword) throw new Error('Token and new password are required.');
+  if (newPassword.length < 6) throw new Error('Password must be at least 6 characters.');
+
+  const hashed = crypto.createHash('sha256').update(token).digest('hex');
+  const users = loadUsers();
+  const idx = users.findIndex(u => u.resetToken === hashed && u.resetTokenExpiry > Date.now());
+
+  if (idx < 0) throw new Error('Invalid or expired reset link. Please request a new one.');
+
+  users[idx].passwordHash = hashPassword(newPassword);
+  users[idx].resetToken = null;
+  users[idx].resetTokenExpiry = null;
+  saveUsers(users);
+
+  return sanitizeUser(users[idx]);
 }
 
 module.exports = {
@@ -185,4 +227,5 @@ module.exports = {
   getUsers, getUserById, getUserByEmail,
   authenticateLocal, authenticateSSO,
   hasUsers, isLegacyMode,
+  generateResetToken, verifyResetToken, resetPassword,
 };

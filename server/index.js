@@ -10,7 +10,8 @@ const { getConfig, setConfig, clearConfig, getSafeConfig } = require('./store');
 const { getAccessToken, rcApiFetch } = require('./rcAuth');
 const { uploadToSftp, testSftpConnection, fetchAllInsights, runScheduledUpload, startSchedule, stopSchedule, getScheduleStatus, getHistory } = require('./sftp');
 const { storeInteraction, getInteractions, normalizePbxRecord, getCount: getInteractionCount } = require('./interactions');
-const { createUser, updateUser, deleteUser, getUsers, authenticateLocal, authenticateSSO, hasUsers, isLegacyMode } = require('./users');
+const { createUser, updateUser, deleteUser, getUsers, authenticateLocal, authenticateSSO, hasUsers, isLegacyMode, generateResetToken, verifyResetToken, resetPassword } = require('./users');
+const { sendPasswordResetEmail, testSmtpConnection } = require('./email');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -260,6 +261,60 @@ app.delete('/api/users/:userId', adminAuth, adminOnly, (req, res) => {
   try {
     deleteUser(req.params.userId);
     res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── Password Reset Routes (public — no auth required) ──────────────────────
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required.' });
+
+    const result = generateResetToken(email);
+
+    // Always return success to not reveal if email exists
+    if (!result) {
+      console.log(`[RESET] Request for non-existent/ineligible email: ${email}`);
+      return res.json({ success: true, message: 'If an account with that email exists, a password reset link has been sent.' });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const resetUrl = `${baseUrl}/reset-password?token=${result.token}`;
+
+    await sendPasswordResetEmail(result.user.email, result.user.name, resetUrl);
+
+    res.json({ success: true, message: 'If an account with that email exists, a password reset link has been sent.' });
+  } catch (err) {
+    console.error('[RESET] Error:', err.message);
+    // Don't reveal SMTP errors to unauthenticated users
+    res.json({ success: true, message: 'If an account with that email exists, a password reset link has been sent.' });
+  }
+});
+
+app.get('/api/auth/verify-reset-token', (req, res) => {
+  const { token } = req.query;
+  const user = verifyResetToken(token);
+  if (!user) return res.json({ valid: false });
+  res.json({ valid: true, email: user.email, name: user.name });
+});
+
+app.post('/api/auth/reset-password', (req, res) => {
+  try {
+    const { token, password } = req.body;
+    const user = resetPassword(token, password);
+    res.json({ success: true, message: `Password updated for ${user.email}.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── SMTP Test (protected) ──────────────────────────────────────────────────
+app.post('/api/smtp/test', adminAuth, async (req, res) => {
+  try {
+    const result = await testSmtpConnection();
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
