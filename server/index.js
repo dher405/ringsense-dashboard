@@ -142,15 +142,67 @@ app.post('/api/rc/test', adminAuth, async (req, res) => {
 });
 
 // ─── Call Log & Insights Routes (protected) ──────────────────────────────────
-// Merged: PBX calls from account-level call log + RCX interactions from webhook store
+// Merged: PBX calls from call log + RCX interactions from webhook store
+
+// Debug endpoint — shows raw API responses to diagnose issues
+app.get('/api/debug/calllog', adminAuth, async (req, res) => {
+  const results = {};
+  const { dateFrom } = req.query;
+  const dfrom = dateFrom || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Try account-level call log
+  try {
+    const params = new URLSearchParams({ view: 'Simple', type: 'Voice', perPage: '10', dateFrom: dfrom });
+    const data = await rcApiFetch(`/restapi/v1.0/account/~/call-log?${params}`);
+    results.accountCallLog = { status: 'ok', totalRecords: (data.records||[]).length, firstRecord: (data.records||[])[0] || null, hasRecordings: (data.records||[]).filter(r=>r.recording).length };
+  } catch (err) {
+    results.accountCallLog = { status: 'error', message: err.message };
+  }
+
+  // Try account-level with recordingType filter
+  try {
+    const params = new URLSearchParams({ view: 'Simple', type: 'Voice', recordingType: 'All', perPage: '10', dateFrom: dfrom });
+    const data = await rcApiFetch(`/restapi/v1.0/account/~/call-log?${params}`);
+    results.accountCallLogWithRecording = { status: 'ok', totalRecords: (data.records||[]).length, hasRecordings: (data.records||[]).filter(r=>r.recording).length };
+  } catch (err) {
+    results.accountCallLogWithRecording = { status: 'error', message: err.message };
+  }
+
+  // Try extension-level call log
+  try {
+    const params = new URLSearchParams({ view: 'Simple', type: 'Voice', perPage: '10', dateFrom: dfrom });
+    const data = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
+    results.extensionCallLog = { status: 'ok', totalRecords: (data.records||[]).length, firstRecord: (data.records||[])[0] || null, hasRecordings: (data.records||[]).filter(r=>r.recording).length };
+  } catch (err) {
+    results.extensionCallLog = { status: 'error', message: err.message };
+  }
+
+  // Try extension-level WITHOUT type filter (maybe these aren't Voice?)
+  try {
+    const params = new URLSearchParams({ view: 'Simple', perPage: '10', dateFrom: dfrom });
+    const data = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
+    results.extensionCallLogNoTypeFilter = { status: 'ok', totalRecords: (data.records||[]).length, types: [...new Set((data.records||[]).map(r=>r.type))], hasRecordings: (data.records||[]).filter(r=>r.recording).length, firstRecord: (data.records||[])[0] || null };
+  } catch (err) {
+    results.extensionCallLogNoTypeFilter = { status: 'error', message: err.message };
+  }
+
+  // Check stored webhook interactions
+  results.webhookInteractions = { count: getInteractionCount() };
+
+  res.json(results);
+});
+
 app.get('/api/calls', adminAuth, async (req, res) => {
   try {
     const { dateFrom, dateTo, perPage } = req.query;
     const dfrom = dateFrom || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const dto = dateTo || undefined;
 
-    // 1. Fetch PBX calls from account-level call log
+    // 1. Fetch PBX calls — try account-level first, fall back to extension-level
     let pbxRecords = [];
+    let callLogSource = 'none';
+
+    // Try account-level call log
     try {
       const params = new URLSearchParams({
         view: 'Simple',
@@ -162,9 +214,38 @@ app.get('/api/calls', adminAuth, async (req, res) => {
       if (dto) params.set('dateTo', dto);
 
       const data = await rcApiFetch(`/restapi/v1.0/account/~/call-log?${params}`);
-      pbxRecords = (data.records || []).filter(r => r.recording).map(normalizePbxRecord);
+      const records = (data.records || []).filter(r => r.recording);
+      if (records.length > 0) {
+        pbxRecords = records.map(normalizePbxRecord);
+        callLogSource = 'account';
+        console.log(`[CALLS] Account-level: ${records.length} recorded calls`);
+      } else {
+        console.log(`[CALLS] Account-level returned ${(data.records||[]).length} calls, ${records.length} with recordings`);
+      }
     } catch (err) {
-      console.warn('[CALLS] PBX call log fetch failed:', err.message);
+      console.warn('[CALLS] Account-level call log failed:', err.message);
+    }
+
+    // Fallback to extension-level if account-level returned nothing
+    if (pbxRecords.length === 0) {
+      try {
+        const params = new URLSearchParams({
+          view: 'Simple',
+          type: 'Voice',
+          recordingType: 'All',
+          perPage: perPage || '250',
+          dateFrom: dfrom,
+        });
+        if (dto) params.set('dateTo', dto);
+
+        const data = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
+        const records = (data.records || []).filter(r => r.recording);
+        pbxRecords = records.map(normalizePbxRecord);
+        callLogSource = 'extension';
+        console.log(`[CALLS] Extension-level: ${records.length} recorded calls`);
+      } catch (err) {
+        console.warn('[CALLS] Extension-level call log also failed:', err.message);
+      }
     }
 
     // 2. Get RCX interactions from webhook store
@@ -183,6 +264,7 @@ app.get('/api/calls', adminAuth, async (req, res) => {
       total: allRecords.length,
       pbxCount: pbxRecords.length,
       rcxCount: rcxRecords.length,
+      callLogSource,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
