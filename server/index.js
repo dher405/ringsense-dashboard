@@ -276,13 +276,31 @@ app.get('/api/calls/:recordingId/insights', adminAuth, async (req, res) => {
     const { recordingId } = req.params;
     const { domain } = req.query;
     const d = domain || 'pbx';
+    console.log(`[INSIGHTS] Fetching: domain=${d}, recordingId=${recordingId} (length=${recordingId.length})`);
     const data = await rcApiFetch(
       `/ai/ringsense/v1/public/accounts/~/domains/${d}/records/${recordingId}/insights`
     );
     res.json(data);
   } catch (err) {
+    console.error(`[INSIGHTS] Error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
+});
+
+// Debug: view stored webhook interactions
+app.get('/api/debug/interactions', adminAuth, (req, res) => {
+  const interactions = getInteractions();
+  res.json({
+    count: interactions.length,
+    interactions: interactions.slice(0, 20).map(i => ({
+      id: i.id,
+      sourceRecordId: i.sourceRecordId,
+      sourceRecordIdLength: (i.sourceRecordId || '').length,
+      domain: i.domain,
+      title: i.title,
+      recordingStartTime: i.recordingStartTime,
+    })),
+  });
 });
 
 // ─── RingSense Webhook Endpoint (public — RC needs to reach it) ─────────────
