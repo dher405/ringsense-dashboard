@@ -39,9 +39,17 @@ async function api(path, options = {}) {
 }
 
 // Auth
-export const authLogin = (password) => api('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+export const authLogin = (password, email) => api('/api/auth/login', { method: 'POST', body: JSON.stringify({ password, email }) });
 export const authLogout = () => api('/api/auth/logout', { method: 'POST' });
 export const authCheck = () => api('/api/auth/check');
+export const getSSOConfig = () => api('/api/auth/sso/config');
+export const getSSOAuthUrl = () => api('/api/auth/sso/authorize');
+
+// Users
+export const listUsers = () => api('/api/users');
+export const createUserApi = (data) => api('/api/users', { method: 'POST', body: JSON.stringify(data) });
+export const updateUserApi = (userId, data) => api(`/api/users/${userId}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteUserApi = (userId) => api(`/api/users/${userId}`, { method: 'DELETE' });
 
 // Config
 export const getConfig = () => api('/api/config');

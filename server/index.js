@@ -10,6 +10,7 @@ const { getConfig, setConfig, clearConfig, getSafeConfig } = require('./store');
 const { getAccessToken, rcApiFetch } = require('./rcAuth');
 const { uploadToSftp, testSftpConnection, fetchAllInsights, runScheduledUpload, startSchedule, stopSchedule, getScheduleStatus, getHistory } = require('./sftp');
 const { storeInteraction, getInteractions, normalizePbxRecord, getCount: getInteractionCount } = require('./interactions');
+const { createUser, updateUser, deleteUser, getUsers, authenticateLocal, authenticateSSO, hasUsers, isLegacyMode } = require('./users');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,24 +21,42 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 
-// ─── Admin Auth Middleware ───────────────────────────────────────────────────
-// Simple token-based auth: client sends admin password, gets a signed session token
-const SESSION_TOKENS = new Map(); // token -> { expires }
+// ─── Session Management ─────────────────────────────────────────────────────
+const SESSION_TOKENS = new Map(); // token -> { expires, user }
 
 function generateSessionToken() {
   return crypto.randomBytes(48).toString('hex');
 }
 
-function adminAuth(req, res, next) {
-  const token = req.headers['x-admin-token'] || req.cookies?.admin_token;
-  if (!token) return res.status(401).json({ error: 'Authentication required' });
+function createSession(user) {
+  const token = generateSessionToken();
+  const expires = Date.now() + 24 * 60 * 60 * 1000;
+  SESSION_TOKENS.set(token, { expires, user });
+  return { token, expires };
+}
 
+function getSession(req) {
+  const token = req.headers['x-admin-token'] || req.cookies?.admin_token;
+  if (!token) return null;
   const session = SESSION_TOKENS.get(token);
   if (!session || session.expires < Date.now()) {
     SESSION_TOKENS.delete(token);
-    return res.status(401).json({ error: 'Session expired' });
+    return null;
   }
+  return session;
+}
 
+function adminAuth(req, res, next) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  req.user = session.user;
+  next();
+}
+
+function adminOnly(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   next();
 }
 
@@ -50,33 +69,42 @@ setInterval(() => {
 }, 60 * 1000);
 
 // ─── Auth Routes ─────────────────────────────────────────────────────────────
+// Login: supports legacy admin password OR email/password
 app.post('/api/auth/login', (req, res) => {
-  const { password } = req.body;
-  const adminPassword = process.env.ADMIN_PASSWORD;
+  const { password, email } = req.body;
 
-  if (!adminPassword || adminPassword === 'changeme') {
-    return res.status(500).json({ error: 'ADMIN_PASSWORD not configured on server. Set it in environment variables.' });
+  // Mode 1: Email + password (user accounts)
+  if (email) {
+    const user = authenticateLocal(email, password);
+    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+
+    const session = createSession(user);
+    res.cookie('admin_token', session.token, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000,
+    });
+    return res.json({ success: true, token: session.token, user });
   }
 
-  // Timing-safe comparison
+  // Mode 2: Legacy admin password (when no users exist yet)
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword || adminPassword === 'changeme') {
+    return res.status(500).json({ error: 'ADMIN_PASSWORD not configured. Set it in environment variables.' });
+  }
+
   const inputBuf = Buffer.from(password || '');
   const expectedBuf = Buffer.from(adminPassword);
   if (inputBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(inputBuf, expectedBuf)) {
     return res.status(401).json({ error: 'Invalid password' });
   }
 
-  const token = generateSessionToken();
-  const expires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-  SESSION_TOKENS.set(token, { expires });
-
-  res.cookie('admin_token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 24 * 60 * 60 * 1000,
+  const legacyUser = { id: 'admin', email: 'admin', name: 'Admin', role: 'admin', authMethod: 'legacy' };
+  const session = createSession(legacyUser);
+  res.cookie('admin_token', session.token, {
+    httpOnly: true, secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict', maxAge: 24 * 60 * 60 * 1000,
   });
-
-  res.json({ success: true, token });
+  res.json({ success: true, token: session.token, user: legacyUser });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -87,14 +115,154 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/check', (req, res) => {
-  const token = req.headers['x-admin-token'] || req.cookies?.admin_token;
-  if (!token) return res.json({ authenticated: false });
-  const session = SESSION_TOKENS.get(token);
-  if (!session || session.expires < Date.now()) {
-    SESSION_TOKENS.delete(token);
-    return res.json({ authenticated: false });
+  const session = getSession(req);
+  if (!session) return res.json({ authenticated: false });
+  res.json({ authenticated: true, user: session.user, hasUsers: hasUsers() });
+});
+
+// ─── Azure AD SSO Routes ────────────────────────────────────────────────────
+app.get('/api/auth/sso/config', (req, res) => {
+  // Return SSO availability info (safe — no secrets)
+  const config = getConfig();
+  res.json({
+    enabled: config.sso_enabled === 'true',
+    provider: 'azure',
+  });
+});
+
+app.get('/api/auth/sso/authorize', (req, res) => {
+  const config = getConfig();
+  if (config.sso_enabled !== 'true') {
+    return res.status(400).json({ error: 'SSO is not configured.' });
   }
-  res.json({ authenticated: true });
+
+  const { sso_tenant_id, sso_client_id, sso_redirect_uri } = config;
+  if (!sso_tenant_id || !sso_client_id) {
+    return res.status(500).json({ error: 'Azure AD tenant ID or client ID not configured.' });
+  }
+
+  const redirectUri = sso_redirect_uri || `${req.protocol}://${req.get('host')}/api/auth/sso/callback`;
+  const state = crypto.randomBytes(24).toString('hex');
+
+  // Store state for CSRF protection
+  SESSION_TOKENS.set(`sso_state_${state}`, { expires: Date.now() + 10 * 60 * 1000 });
+
+  const authUrl = `https://login.microsoftonline.com/${sso_tenant_id}/oauth2/v2.0/authorize?` +
+    new URLSearchParams({
+      client_id: sso_client_id,
+      response_type: 'code',
+      redirect_uri: redirectUri,
+      scope: 'openid profile email',
+      state,
+      response_mode: 'query',
+    }).toString();
+
+  res.json({ authUrl });
+});
+
+app.get('/api/auth/sso/callback', async (req, res) => {
+  try {
+    const { code, state, error: authError } = req.query;
+
+    if (authError) {
+      return res.redirect(`/?sso_error=${encodeURIComponent(authError)}`);
+    }
+
+    // Verify state
+    const stateKey = `sso_state_${state}`;
+    const stateSession = SESSION_TOKENS.get(stateKey);
+    if (!stateSession || stateSession.expires < Date.now()) {
+      SESSION_TOKENS.delete(stateKey);
+      return res.redirect('/?sso_error=Invalid+or+expired+state');
+    }
+    SESSION_TOKENS.delete(stateKey);
+
+    const config = getConfig();
+    const { sso_tenant_id, sso_client_id, sso_client_secret, sso_redirect_uri } = config;
+    const redirectUri = sso_redirect_uri || `${req.protocol}://${req.get('host')}/api/auth/sso/callback`;
+
+    // Exchange code for tokens
+    const tokenRes = await fetch(`https://login.microsoftonline.com/${sso_tenant_id}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: sso_client_id,
+        client_secret: sso_client_secret,
+        code,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+        scope: 'openid profile email',
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const errBody = await tokenRes.text();
+      console.error('[SSO] Token exchange failed:', errBody);
+      return res.redirect('/?sso_error=Token+exchange+failed');
+    }
+
+    const tokenData = await tokenRes.json();
+
+    // Decode the ID token to get user info
+    const idToken = tokenData.id_token;
+    const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString());
+
+    const profile = {
+      email: payload.email || payload.preferred_username || payload.upn,
+      name: payload.name || payload.given_name,
+      oid: payload.oid,
+    };
+
+    console.log(`[SSO] Login: ${profile.email} (${profile.name})`);
+
+    const user = authenticateSSO(profile);
+    const session = createSession(user);
+
+    res.cookie('admin_token', session.token, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    // Redirect to frontend with token in URL (frontend will save it)
+    res.redirect(`/?sso_token=${session.token}`);
+  } catch (err) {
+    console.error('[SSO] Callback error:', err.message);
+    res.redirect(`/?sso_error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// ─── User Management Routes (admin only) ────────────────────────────────────
+app.get('/api/users', adminAuth, adminOnly, (req, res) => {
+  res.json(getUsers());
+});
+
+app.post('/api/users', adminAuth, adminOnly, (req, res) => {
+  try {
+    const { email, password, name, role } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required.' });
+    const user = createUser({ email, password, name, role });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/users/:userId', adminAuth, adminOnly, (req, res) => {
+  try {
+    const user = updateUser(req.params.userId, req.body);
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/users/:userId', adminAuth, adminOnly, (req, res) => {
+  try {
+    deleteUser(req.params.userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ─── Config Routes (protected) ───────────────────────────────────────────────

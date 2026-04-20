@@ -435,3 +435,77 @@ html, body {
   .form-actions-row { flex-direction: column; }
   .radio-group { flex-direction: column; }
 }
+
+/* ─── SSO Button ─────────────────────────────────────────────────────────── */
+.btn-sso {
+  background: var(--bg-elevated); color: var(--text-primary);
+  border: 1px solid var(--border); padding: 12px; font-size: 14px; font-weight: 500;
+}
+.btn-sso:hover { background: var(--bg-card-hover); border-color: var(--text-muted); }
+.btn-sso svg { flex-shrink: 0; }
+
+.login-divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 20px 0; color: var(--text-muted); font-size: 12px;
+}
+.login-divider::before, .login-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+/* ─── User Management ────────────────────────────────────────────────────── */
+.user-add-form {
+  padding: 20px; background: var(--bg-secondary); border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.user-table { display: flex; flex-direction: column; gap: 6px; }
+
+.user-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; background: var(--bg-secondary);
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.user-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: white; flex-shrink: 0;
+}
+
+.user-info { flex: 1; min-width: 140px; }
+.user-name { display: block; font-size: 14px; font-weight: 500; }
+.user-email { display: block; font-size: 12px; color: var(--text-muted); }
+
+.role-badge {
+  font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.role-badge.admin { background: rgba(244,121,32,0.12); color: var(--accent); }
+.role-badge.viewer { background: rgba(99,102,241,0.12); color: #A5B4FC; }
+
+.user-method {
+  font-size: 11px; color: var(--text-muted); padding: 2px 8px;
+  background: var(--bg-input); border-radius: 4px;
+}
+
+.user-status { font-size: 11px; font-weight: 500; }
+.user-status.active { color: var(--success); }
+.user-status.disabled { color: var(--text-muted); }
+
+.user-actions { margin-left: auto; }
+
+.user-edit-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.user-edit-row select {
+  padding: 4px 8px; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text-primary); font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  .user-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .user-actions { margin-left: 0; width: 100%; }
+  .user-edit-row { width: 100%; }
+}
+

@@ -12,6 +12,7 @@ const SENSITIVE_FIELDS = [
   'rc_refresh_token',
   'sftp_password',
   'sftp_private_key',
+  'sso_client_secret',
 ];
 
 function ensureDir() {

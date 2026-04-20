@@ -61,24 +61,57 @@ function Header() {
   );
 }
 
-// ─── Admin Login ─────────────────────────────────────────────────────────────
+// ─── Login Page ──────────────────────────────────────────────────────────────
 function AdminLogin() {
   const { login } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [mode, setMode] = useState('email'); // 'email' or 'legacy'
+
+  useEffect(() => {
+    // Check SSO availability
+    (async () => {
+      try {
+        const cfg = await API.getSSOConfig();
+        setSsoEnabled(cfg.enabled);
+      } catch {}
+    })();
+    // Check for SSO callback token in URL
+    const params = new URLSearchParams(window.location.search);
+    const ssoToken = params.get('sso_token');
+    const ssoError = params.get('sso_error');
+    if (ssoToken) {
+      login(ssoToken);
+      window.history.replaceState({}, '', '/');
+    }
+    if (ssoError) {
+      setError(`SSO Error: ${ssoError}`);
+      window.history.replaceState({}, '', '/');
+    }
+  }, [login]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
-      const data = await API.authLogin(password);
+      const data = mode === 'email'
+        ? await API.authLogin(password, email)
+        : await API.authLogin(password);
       login(data.token);
     } catch (err) {
       setError(err.message);
-    } finally {
-      setLoading(false);
+    } finally { setLoading(false); }
+  };
+
+  const handleSSO = async () => {
+    try {
+      const data = await API.getSSOAuthUrl();
+      window.location.href = data.authUrl;
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -88,21 +121,43 @@ function AdminLogin() {
         <div className="login-header">
           <div className="login-icon">{Icons.lock}</div>
           <h2>Dashboard Access</h2>
-          <p className="login-desc">Enter your admin password to continue</p>
+          <p className="login-desc">Sign in to access RingSense call insights</p>
         </div>
         {error && <div className="error-banner">{error}</div>}
+
+        {ssoEnabled && (
+          <>
+            <button className="btn btn-sso btn-full" onClick={handleSSO} type="button">
+              <svg width="18" height="18" viewBox="0 0 23 23"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
+              Sign in with Microsoft
+            </button>
+            <div className="login-divider"><span>or sign in with credentials</span></div>
+          </>
+        )}
+
+        <div className="auth-tabs" style={{marginBottom: 16}}>
+          <button className={`auth-tab ${mode === 'email' ? 'active' : ''}`} onClick={() => setMode('email')}>Email + Password</button>
+          <button className={`auth-tab ${mode === 'legacy' ? 'active' : ''}`} onClick={() => setMode('legacy')}>Admin Password</button>
+        </div>
+
         <form onSubmit={handleSubmit}>
+          {mode === 'email' && (
+            <div className="form-group">
+              <label>Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" autoFocus />
+            </div>
+          )}
           <div className="form-group">
-            <label>Admin Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" autoFocus />
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'legacy' ? 'Admin password' : 'Your password'} autoFocus={mode === 'legacy'} />
           </div>
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
             {loading ? <span className="spinner" /> : Icons.shield}
-            {loading ? 'Authenticating...' : 'Unlock Dashboard'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
         <div className="login-footer">
-          <p style={{fontSize: 12, color: 'var(--text-muted)'}}>All credentials are encrypted server-side with AES-256-GCM</p>
+          <p style={{fontSize: 12, color: 'var(--text-muted)'}}>All credentials encrypted with AES-256-GCM • Passwords hashed with PBKDF2</p>
         </div>
       </div>
     </div>
@@ -121,6 +176,9 @@ function SettingsPage() {
   const [scheduleHistory, setScheduleHistory] = useState([]);
   const [webhookStatus, setWebhookStatus] = useState({});
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [users, setUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'viewer' });
+  const [editingUser, setEditingUser] = useState(null);
 
   // Form state
   const [form, setForm] = useState({
@@ -142,6 +200,13 @@ function SettingsPage() {
     schedule_day_of_week: '1',
     schedule_day_of_month: '1',
     schedule_lookback_days: '7',
+    sso_enabled: 'false',
+    sso_tenant_id: '',
+    sso_client_id: '',
+    sso_client_secret: '',
+    sso_redirect_uri: '',
+    sso_auto_create: 'false',
+    sso_allowed_domain: '',
   });
 
   const loadConfig = useCallback(async () => {
@@ -169,12 +234,26 @@ function SettingsPage() {
         schedule_day_of_week: data.schedule_day_of_week || '1',
         schedule_day_of_month: data.schedule_day_of_month || '1',
         schedule_lookback_days: data.schedule_lookback_days || '7',
+        sso_enabled: data.sso_enabled || 'false',
+        sso_tenant_id: data.sso_tenant_id || '',
+        sso_client_id: data.sso_client_id || '',
+        sso_client_secret: data.sso_client_secret || '',
+        sso_redirect_uri: data.sso_redirect_uri || '',
+        sso_auto_create: data.sso_auto_create || 'false',
+        sso_allowed_domain: data.sso_allowed_domain || '',
       }));
     } catch (err) {
       setStatus({ type: 'error', message: err.message });
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const loadUsers = useCallback(async () => {
+    try {
+      const data = await API.listUsers();
+      setUsers(data);
+    } catch {}
   }, []);
 
   const loadSchedule = useCallback(async () => {
@@ -187,7 +266,7 @@ function SettingsPage() {
     } catch {}
   }, []);
 
-  useEffect(() => { loadConfig(); loadSchedule(); }, [loadConfig, loadSchedule]);
+  useEffect(() => { loadConfig(); loadSchedule(); loadUsers(); }, [loadConfig, loadSchedule, loadUsers]);
 
   const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -300,11 +379,14 @@ function SettingsPage() {
 
   if (loading) return <div className="main-content"><div className="loading-state"><div className="spinner-lg"/><p>Loading configuration...</p></div></div>;
 
+  const isAdmin = true; // TODO: check from auth context once roles are wired
   const sections = [
     { key: 'api', label: 'RingCentral API', icon: Icons.phone },
     { key: 'webhook', label: 'RCX Webhook', icon: Icons.refresh },
     { key: 'sftp', label: 'SFTP Server', icon: Icons.server },
     { key: 'schedule', label: 'Scheduled Uploads', icon: Icons.calendar },
+    { key: 'users', label: 'User Accounts', icon: Icons.users },
+    { key: 'sso', label: 'Azure SSO', icon: Icons.shield },
   ];
 
   const DAYS_OF_WEEK = [
@@ -706,6 +788,239 @@ function SettingsPage() {
                         <span className="history-time">{new Date(entry.timestamp).toLocaleString()}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─── Users Section ───────────────────────────────────────────── */}
+          {activeSection === 'users' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h3>User Accounts</h3>
+                <p>Create and manage user accounts for dashboard access. Users can be admins (full access) or viewers (read-only calls and insights).</p>
+              </div>
+
+              {/* Add New User Form */}
+              <div className="user-add-form">
+                <h4 style={{fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12}}>Add New User</h4>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Email</label>
+                    <input type="email" value={newUser.email} onChange={e => setNewUser(p => ({...p, email: e.target.value}))} placeholder="user@company.com" />
+                  </div>
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input type="text" value={newUser.name} onChange={e => setNewUser(p => ({...p, name: e.target.value}))} placeholder="Full name" />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Password</label>
+                    <input type="password" value={newUser.password} onChange={e => setNewUser(p => ({...p, password: e.target.value}))} placeholder="Set password (leave blank for SSO-only)" />
+                  </div>
+                  <div className="form-group form-group-sm" style={{flex: '0 0 140px'}}>
+                    <label>Role</label>
+                    <select value={newUser.role} onChange={e => setNewUser(p => ({...p, role: e.target.value}))}>
+                      <option value="viewer">Viewer</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                </div>
+                <button className="btn btn-primary" onClick={async () => {
+                  if (!newUser.email) { showStatus('error', 'Email is required.'); return; }
+                  try {
+                    await API.createUserApi(newUser);
+                    showStatus('success', `User "${newUser.email}" created.`);
+                    setNewUser({ email: '', password: '', name: '', role: 'viewer' });
+                    loadUsers();
+                  } catch (err) { showStatus('error', err.message); }
+                }}>
+                  {Icons.check} Create User
+                </button>
+              </div>
+
+              {/* User List */}
+              {users.length > 0 && (
+                <div className="user-list" style={{marginTop: 24}}>
+                  <h4 style={{fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12}}>Existing Users ({users.length})</h4>
+                  <div className="user-table">
+                    {users.map(user => (
+                      <div key={user.id} className="user-row">
+                        <div className="user-avatar" style={{background: `hsl(${user.email.charCodeAt(0) * 7}, 50%, 55%)`}}>
+                          {(user.name || user.email).charAt(0).toUpperCase()}
+                        </div>
+                        <div className="user-info">
+                          <span className="user-name">{user.name || user.email.split('@')[0]}</span>
+                          <span className="user-email">{user.email}</span>
+                        </div>
+                        <span className={`role-badge ${user.role}`}>{user.role}</span>
+                        <span className="user-method">{user.authMethod === 'sso' ? 'SSO' : 'Password'}</span>
+                        <span className={`user-status ${user.enabled ? 'active' : 'disabled'}`}>{user.enabled ? 'Active' : 'Disabled'}</span>
+                        <div className="user-actions">
+                          {editingUser === user.id ? (
+                            <div className="user-edit-row">
+                              <select defaultValue={user.role} onChange={async (e) => {
+                                try {
+                                  await API.updateUserApi(user.id, { role: e.target.value });
+                                  showStatus('success', `Role updated for ${user.email}.`);
+                                  loadUsers();
+                                } catch (err) { showStatus('error', err.message); }
+                              }}>
+                                <option value="viewer">Viewer</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                              <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11}} onClick={async () => {
+                                try {
+                                  await API.updateUserApi(user.id, { enabled: !user.enabled });
+                                  showStatus('success', `User ${user.enabled ? 'disabled' : 'enabled'}.`);
+                                  loadUsers();
+                                } catch (err) { showStatus('error', err.message); }
+                              }}>
+                                {user.enabled ? 'Disable' : 'Enable'}
+                              </button>
+                              <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11, color: '#FCA5A5'}} onClick={async () => {
+                                if (!window.confirm(`Delete user "${user.email}"? This cannot be undone.`)) return;
+                                try {
+                                  await API.deleteUserApi(user.id);
+                                  showStatus('success', `User "${user.email}" deleted.`);
+                                  loadUsers();
+                                } catch (err) { showStatus('error', err.message); }
+                              }}>
+                                Delete
+                              </button>
+                              <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11}} onClick={() => setEditingUser(null)}>Done</button>
+                            </div>
+                          ) : (
+                            <button className="btn btn-ghost" style={{padding: '4px 10px', fontSize: 11}} onClick={() => setEditingUser(user.id)}>
+                              {Icons.settings} Edit
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {users.length === 0 && (
+                <div className="empty-tab" style={{marginTop: 20}}>
+                  No user accounts created yet. The admin password is used for login until users are added.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─── Azure SSO Section ───────────────────────────────────────── */}
+          {activeSection === 'sso' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h3>Azure AD Single Sign-On</h3>
+                <p>Enable Microsoft Entra ID (Azure AD) login. Users sign in with their corporate Microsoft account and are matched by email address.</p>
+              </div>
+
+              <div className="schedule-toggle" style={{marginBottom: 20}}>
+                <label className="toggle-label">
+                  <div className={`toggle-switch ${form.sso_enabled === 'true' ? 'on' : ''}`} onClick={() => updateField('sso_enabled', form.sso_enabled === 'true' ? 'false' : 'true')}>
+                    <div className="toggle-knob" />
+                  </div>
+                  <div>
+                    <strong>Enable Azure AD SSO</strong>
+                    <p>Show the "Sign in with Microsoft" button on the login page</p>
+                  </div>
+                </label>
+              </div>
+
+              {form.sso_enabled === 'true' && (
+                <>
+                  <div className="form-group">
+                    <label>Tenant ID</label>
+                    <input type="text" value={form.sso_tenant_id} onChange={e => updateField('sso_tenant_id', e.target.value)} placeholder="e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47" />
+                    <span className="form-hint">Found in Azure Portal → Entra ID → Overview → Tenant ID</span>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Application (Client) ID</label>
+                    <input type="text" value={form.sso_client_id} onChange={e => updateField('sso_client_id', e.target.value)} placeholder="e.g. 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d" />
+                    <span className="form-hint">Found in Azure Portal → App Registrations → Your App → Application ID</span>
+                  </div>
+
+                  <div className="form-group">
+                    <label>
+                      Client Secret
+                      {config.sso_client_secret_set && <span className="field-encrypted">Encrypted</span>}
+                    </label>
+                    <input type="password" value={form.sso_client_secret} onChange={e => updateField('sso_client_secret', e.target.value)} placeholder={config.sso_client_secret_set ? 'Leave blank to keep current' : 'Enter client secret value'} />
+                    <span className="form-hint">Create under App Registrations → Certificates & secrets → New client secret</span>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Redirect URI</label>
+                    <input type="text" value={form.sso_redirect_uri} onChange={e => updateField('sso_redirect_uri', e.target.value)} placeholder={`${window.location.origin}/api/auth/sso/callback`} />
+                    <span className="form-hint">Must match the redirect URI configured in your Azure app registration. Default: {window.location.origin}/api/auth/sso/callback</span>
+                  </div>
+
+                  <div style={{borderTop: '1px solid var(--border)', paddingTop: 20, marginTop: 20}}>
+                    <h4 style={{fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 16}}>User Provisioning</h4>
+
+                    <div className="schedule-toggle" style={{marginBottom: 16}}>
+                      <label className="toggle-label">
+                        <div className={`toggle-switch ${form.sso_auto_create === 'true' ? 'on' : ''}`} onClick={() => updateField('sso_auto_create', form.sso_auto_create === 'true' ? 'false' : 'true')}>
+                          <div className="toggle-knob" />
+                        </div>
+                        <div>
+                          <strong>Auto-create accounts on first SSO login</strong>
+                          <p>New users who sign in via SSO will automatically get a viewer account</p>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Allowed Email Domain (optional)</label>
+                      <input type="text" value={form.sso_allowed_domain} onChange={e => updateField('sso_allowed_domain', e.target.value)} placeholder="e.g. ringcentral.com" />
+                      <span className="form-hint">Only emails from this domain can auto-create accounts. Leave blank to allow any domain.</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="form-actions-row" style={{marginTop: 20}}>
+                <button className="btn btn-primary" onClick={async () => {
+                  setSaving(true);
+                  try {
+                    const updates = {
+                      sso_enabled: form.sso_enabled,
+                      sso_tenant_id: form.sso_tenant_id,
+                      sso_client_id: form.sso_client_id,
+                      sso_redirect_uri: form.sso_redirect_uri,
+                      sso_auto_create: form.sso_auto_create,
+                      sso_allowed_domain: form.sso_allowed_domain,
+                    };
+                    if (form.sso_client_secret && !form.sso_client_secret.startsWith('••••')) {
+                      updates.sso_client_secret = form.sso_client_secret;
+                    }
+                    await API.updateConfig(updates);
+                    showStatus('success', 'Azure SSO configuration saved.');
+                    loadConfig();
+                  } catch (err) { showStatus('error', err.message); }
+                  finally { setSaving(false); }
+                }} disabled={saving}>
+                  {saving ? <span className="spinner" /> : Icons.check}
+                  Save SSO Config
+                </button>
+              </div>
+
+              {form.sso_enabled === 'true' && (
+                <div className="schedule-status-card" style={{marginTop: 20}}>
+                  <h4>Azure App Registration Setup</h4>
+                  <div style={{fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6}}>
+                    <p style={{marginBottom: 8}}>In the Azure Portal, configure your app registration:</p>
+                    <p>1. Go to <strong>Entra ID → App registrations → New registration</strong></p>
+                    <p>2. Set supported account types to "Single tenant" (your org only)</p>
+                    <p>3. Add a <strong>Web redirect URI</strong>: <code style={{background: 'var(--bg-input)', padding: '2px 6px', borderRadius: 4, fontSize: 12}}>{form.sso_redirect_uri || `${window.location.origin}/api/auth/sso/callback`}</code></p>
+                    <p>4. Under <strong>API permissions</strong>, ensure "openid", "profile", and "email" are granted</p>
+                    <p>5. Create a <strong>client secret</strong> under Certificates & secrets</p>
                   </div>
                 </div>
               )}
