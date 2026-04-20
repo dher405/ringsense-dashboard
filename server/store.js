@@ -13,6 +13,8 @@ const SENSITIVE_FIELDS = [
   'sftp_password',
   'sftp_private_key',
   'sso_client_secret',
+  'sp_client_secret',
+  'sp_graph_token',
 ];
 
 function ensureDir() {

@@ -207,6 +207,15 @@ function SettingsPage() {
     sso_redirect_uri: '',
     sso_auto_create: 'false',
     sso_allowed_domain: '',
+    sp_tenant_id: '',
+    sp_client_id: '',
+    sp_client_secret: '',
+    sp_site_id: '',
+    sp_drive_id: '',
+    sp_folder_path: '/RingSense Exports',
+    sp_use_sso_creds: 'true',
+    schedule_sftp_enabled: 'true',
+    schedule_sharepoint_enabled: 'true',
   });
 
   const loadConfig = useCallback(async () => {
@@ -241,6 +250,15 @@ function SettingsPage() {
         sso_redirect_uri: data.sso_redirect_uri || '',
         sso_auto_create: data.sso_auto_create || 'false',
         sso_allowed_domain: data.sso_allowed_domain || '',
+        sp_tenant_id: data.sp_tenant_id || '',
+        sp_client_id: data.sp_client_id || '',
+        sp_client_secret: data.sp_client_secret || '',
+        sp_site_id: data.sp_site_id || '',
+        sp_drive_id: data.sp_drive_id || '',
+        sp_folder_path: data.sp_folder_path || '/RingSense Exports',
+        sp_use_sso_creds: data.sp_use_sso_creds || 'true',
+        schedule_sftp_enabled: data.schedule_sftp_enabled || 'true',
+        schedule_sharepoint_enabled: data.schedule_sharepoint_enabled || 'true',
       }));
     } catch (err) {
       setStatus({ type: 'error', message: err.message });
@@ -322,6 +340,8 @@ function SettingsPage() {
         schedule_day_of_week: form.schedule_day_of_week,
         schedule_day_of_month: form.schedule_day_of_month,
         schedule_lookback_days: form.schedule_lookback_days,
+        schedule_sftp_enabled: form.schedule_sftp_enabled,
+        schedule_sharepoint_enabled: form.schedule_sharepoint_enabled,
       });
       if (form.schedule_enabled === 'true') {
         await API.startSchedule();
@@ -384,6 +404,7 @@ function SettingsPage() {
     { key: 'api', label: 'RingCentral API', icon: Icons.phone },
     { key: 'webhook', label: 'RCX Webhook', icon: Icons.refresh },
     { key: 'sftp', label: 'SFTP Server', icon: Icons.server },
+    { key: 'sharepoint', label: 'SharePoint', icon: Icons.upload },
     { key: 'schedule', label: 'Scheduled Uploads', icon: Icons.calendar },
     { key: 'users', label: 'User Accounts', icon: Icons.users },
     { key: 'sso', label: 'Azure SSO', icon: Icons.shield },
@@ -425,7 +446,10 @@ function SettingsPage() {
               <span>{s.label}</span>
               {s.key === 'api' && config.rc_client_id && <span className="nav-badge configured">Configured</span>}
               {s.key === 'sftp' && config.sftp_host && <span className="nav-badge configured">Configured</span>}
+              {s.key === 'sharepoint' && config.sp_site_id && <span className="nav-badge configured">Configured</span>}
               {s.key === 'schedule' && scheduleStatus.active && <span className="nav-badge active-badge">Active</span>}
+              {s.key === 'sso' && config.sso_enabled === 'true' && <span className="nav-badge configured">Enabled</span>}
+              {s.key === 'users' && users.length > 0 && <span className="nav-badge configured">{users.length}</span>}
             </button>
           ))}
           <div className="settings-nav-divider" />
@@ -662,12 +686,167 @@ function SettingsPage() {
             </div>
           )}
 
+          {/* ─── SharePoint Section ──────────────────────────────────────── */}
+          {activeSection === 'sharepoint' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h3>SharePoint Upload</h3>
+                <p>Upload call insights data to a SharePoint document library via Microsoft Graph API. Uses the same schedule as SFTP uploads.</p>
+              </div>
+
+              <div className="schedule-toggle" style={{marginBottom: 20}}>
+                <label className="toggle-label">
+                  <div className={`toggle-switch ${form.sp_use_sso_creds === 'true' ? 'on' : ''}`} onClick={() => updateField('sp_use_sso_creds', form.sp_use_sso_creds === 'true' ? 'false' : 'true')}>
+                    <div className="toggle-knob" />
+                  </div>
+                  <div>
+                    <strong>Use Azure SSO credentials</strong>
+                    <p>Reuse the Tenant ID, Client ID, and Client Secret from the Azure SSO configuration</p>
+                  </div>
+                </label>
+              </div>
+
+              {form.sp_use_sso_creds !== 'true' && (
+                <>
+                  <div className="form-group">
+                    <label>Tenant ID</label>
+                    <input type="text" value={form.sp_tenant_id} onChange={e => updateField('sp_tenant_id', e.target.value)} placeholder="Azure AD Tenant ID" />
+                  </div>
+                  <div className="form-group">
+                    <label>Application (Client) ID</label>
+                    <input type="text" value={form.sp_client_id} onChange={e => updateField('sp_client_id', e.target.value)} placeholder="App registration Client ID" />
+                  </div>
+                  <div className="form-group">
+                    <label>
+                      Client Secret
+                      {config.sp_client_secret_set && <span className="field-encrypted">Encrypted</span>}
+                    </label>
+                    <input type="password" value={form.sp_client_secret} onChange={e => updateField('sp_client_secret', e.target.value)} placeholder={config.sp_client_secret_set ? 'Leave blank to keep current' : 'Enter client secret'} />
+                  </div>
+                </>
+              )}
+
+              {form.sp_use_sso_creds === 'true' && (
+                <div style={{padding: 12, background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: 16, fontSize: 13, color: 'var(--text-secondary)'}}>
+                  Using credentials from Azure SSO configuration. Make sure the app registration has <strong>Sites.ReadWrite.All</strong> application permission in Microsoft Graph.
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>SharePoint Site ID</label>
+                <div style={{display: 'flex', gap: 8}}>
+                  <input type="text" value={form.sp_site_id} onChange={e => updateField('sp_site_id', e.target.value)} placeholder="e.g. contoso.sharepoint.com,guid,guid" style={{flex: 1}} />
+                  <button className="btn btn-secondary" style={{whiteSpace: 'nowrap'}} onClick={async () => {
+                    const search = prompt('Search for a SharePoint site by name:');
+                    if (!search) return;
+                    try {
+                      const sites = await API.searchSharePointSites(search);
+                      if (sites.length === 0) { showStatus('error', 'No sites found.'); return; }
+                      const msg = sites.map((s, i) => `${i + 1}. ${s.name} — ${s.id}`).join('\n');
+                      const pick = prompt(`Found ${sites.length} site(s):\n\n${msg}\n\nEnter number to select:`);
+                      if (pick) {
+                        const idx = parseInt(pick) - 1;
+                        if (sites[idx]) { updateField('sp_site_id', sites[idx].id); showStatus('success', `Selected site: ${sites[idx].name}`); }
+                      }
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.search} Search Sites
+                  </button>
+                </div>
+                <span className="form-hint">The full site ID from Microsoft Graph. Use "Search Sites" to find it.</span>
+              </div>
+
+              <div className="form-group">
+                <label>Drive ID (optional)</label>
+                <div style={{display: 'flex', gap: 8}}>
+                  <input type="text" value={form.sp_drive_id} onChange={e => updateField('sp_drive_id', e.target.value)} placeholder="Leave blank for default document library" style={{flex: 1}} />
+                  {form.sp_site_id && (
+                    <button className="btn btn-secondary" style={{whiteSpace: 'nowrap'}} onClick={async () => {
+                      try {
+                        const drives = await API.listSharePointDrives(form.sp_site_id);
+                        if (drives.length === 0) { showStatus('error', 'No drives found.'); return; }
+                        const msg = drives.map((d, i) => `${i + 1}. ${d.name} (${d.driveType}) — ${d.id}`).join('\n');
+                        const pick = prompt(`Found ${drives.length} drive(s):\n\n${msg}\n\nEnter number to select (or cancel for default):`);
+                        if (pick) {
+                          const idx = parseInt(pick) - 1;
+                          if (drives[idx]) { updateField('sp_drive_id', drives[idx].id); showStatus('success', `Selected drive: ${drives[idx].name}`); }
+                        }
+                      } catch (err) { showStatus('error', err.message); }
+                    }}>
+                      {Icons.search} List Drives
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Folder Path</label>
+                <input type="text" value={form.sp_folder_path} onChange={e => updateField('sp_folder_path', e.target.value)} placeholder="/RingSense Exports" />
+                <span className="form-hint">Folder within the document library. Will be created if it doesn't exist.</span>
+              </div>
+
+              <div className="form-actions-row">
+                <button className="btn btn-primary" onClick={async () => {
+                  setSaving(true);
+                  try {
+                    const updates = {
+                      sp_site_id: form.sp_site_id,
+                      sp_drive_id: form.sp_drive_id,
+                      sp_folder_path: form.sp_folder_path,
+                      sp_use_sso_creds: form.sp_use_sso_creds,
+                    };
+                    if (form.sp_use_sso_creds !== 'true') {
+                      updates.sp_tenant_id = form.sp_tenant_id;
+                      updates.sp_client_id = form.sp_client_id;
+                      if (form.sp_client_secret && !form.sp_client_secret.startsWith('••••')) {
+                        updates.sp_client_secret = form.sp_client_secret;
+                      }
+                    }
+                    await API.updateConfig(updates);
+                    showStatus('success', 'SharePoint configuration saved.');
+                    loadConfig();
+                  } catch (err) { showStatus('error', err.message); }
+                  finally { setSaving(false); }
+                }} disabled={saving}>
+                  {saving ? <span className="spinner" /> : Icons.check}
+                  Save SharePoint Config
+                </button>
+                <button className="btn btn-secondary" onClick={async () => {
+                  showStatus('info', 'Testing SharePoint connection...');
+                  try {
+                    const res = await API.testSharePoint();
+                    showStatus('success', res.message);
+                  } catch (err) { showStatus('error', err.message); }
+                }}>
+                  {Icons.play} Test Connection
+                </button>
+                <button className="btn btn-secondary" onClick={async () => {
+                  showStatus('info', 'Uploading to SharePoint...');
+                  try {
+                    const res = await API.uploadSharePointNow(parseInt(form.schedule_lookback_days || '7'));
+                    showStatus('success', res.message || `Uploaded ${res.recordCount} records to "${res.fileName}"`);
+                  } catch (err) { showStatus('error', err.message); }
+                }}>
+                  {Icons.upload} Upload Now
+                </button>
+              </div>
+
+              <div className="schedule-status-card" style={{marginTop: 20}}>
+                <h4>Azure App Permission Required</h4>
+                <div style={{fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6}}>
+                  <p>Your Azure app registration needs the <strong>Sites.ReadWrite.All</strong> application permission (not delegated) to upload files via the Graph API.</p>
+                  <p style={{marginTop: 6}}>In Azure Portal → App registrations → API permissions → Add permission → Microsoft Graph → Application permissions → Sites.ReadWrite.All → Grant admin consent.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ─── Schedule Section ────────────────────────────────────────── */}
           {activeSection === 'schedule' && (
             <div className="settings-section">
               <div className="section-header">
-                <h3>Scheduled SFTP Uploads</h3>
-                <p>Automatically export and upload new call insights data on a schedule.</p>
+                <h3>Scheduled Uploads</h3>
+                <p>Automatically export and upload new call insights data to SFTP and/or SharePoint on a schedule.</p>
               </div>
 
               <div className="schedule-toggle">
@@ -733,6 +912,32 @@ function SettingsPage() {
                     <label>Lookback Period (days)</label>
                     <input type="number" min="1" max="90" value={form.schedule_lookback_days} onChange={e => updateField('schedule_lookback_days', e.target.value)} />
                     <span className="form-hint">How many days of call data to include in each export</span>
+                  </div>
+
+                  <div style={{borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 8}}>
+                    <h4 style={{fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12}}>Upload Destinations</h4>
+                    <div className="schedule-toggle" style={{marginBottom: 12}}>
+                      <label className="toggle-label">
+                        <div className={`toggle-switch ${form.schedule_sftp_enabled === 'true' ? 'on' : ''}`} onClick={() => updateField('schedule_sftp_enabled', form.schedule_sftp_enabled === 'true' ? 'false' : 'true')}>
+                          <div className="toggle-knob" />
+                        </div>
+                        <div>
+                          <strong>SFTP Server</strong>
+                          <p>{config.sftp_host ? `Upload to ${config.sftp_host}` : 'Not configured — set up in SFTP Server section'}</p>
+                        </div>
+                      </label>
+                    </div>
+                    <div className="schedule-toggle">
+                      <label className="toggle-label">
+                        <div className={`toggle-switch ${form.schedule_sharepoint_enabled === 'true' ? 'on' : ''}`} onClick={() => updateField('schedule_sharepoint_enabled', form.schedule_sharepoint_enabled === 'true' ? 'false' : 'true')}>
+                          <div className="toggle-knob" />
+                        </div>
+                        <div>
+                          <strong>SharePoint</strong>
+                          <p>{config.sp_site_id ? 'Upload to configured SharePoint site' : 'Not configured — set up in SharePoint section'}</p>
+                        </div>
+                      </label>
+                    </div>
                   </div>
                 </>
               )}

@@ -73,6 +73,12 @@ export const getInsights = (recordingId, domain = 'pbx') => {
 export const testSftp = () => api('/api/sftp/test', { method: 'POST' });
 export const uploadNow = (daysBack = 7) => api('/api/sftp/upload-now', { method: 'POST', body: JSON.stringify({ daysBack }) });
 
+// SharePoint
+export const testSharePoint = () => api('/api/sharepoint/test', { method: 'POST' });
+export const uploadSharePointNow = (daysBack = 7) => api('/api/sharepoint/upload-now', { method: 'POST', body: JSON.stringify({ daysBack }) });
+export const searchSharePointSites = (search) => api(`/api/sharepoint/sites?search=${encodeURIComponent(search || '')}`);
+export const listSharePointDrives = (siteId) => api(`/api/sharepoint/drives/${siteId}`);
+
 // Schedule
 export const getScheduleStatus = () => api('/api/schedule/status');
 export const startSchedule = () => api('/api/schedule/start', { method: 'POST' });

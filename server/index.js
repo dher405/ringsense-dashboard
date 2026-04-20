@@ -764,6 +764,53 @@ app.post('/api/sftp/upload-now', adminAuth, async (req, res) => {
   }
 });
 
+// ─── SharePoint Routes (protected) ──────────────────────────────────────────
+const { uploadToSharePoint, testSharePointConnection, listSites, listDrives } = require('./sharepoint');
+
+app.post('/api/sharepoint/test', adminAuth, async (req, res) => {
+  try {
+    const result = await testSharePointConnection();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/sharepoint/upload-now', adminAuth, async (req, res) => {
+  try {
+    const { daysBack } = req.body;
+    const data = await fetchAllInsights(daysBack || 7);
+    if (data.length === 0) {
+      return res.json({ success: true, message: 'No recorded calls found for the period.' });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `ringsense-export-${timestamp}.json`;
+    const result = await uploadToSharePoint(data, filename);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/sharepoint/sites', adminAuth, async (req, res) => {
+  try {
+    const { search } = req.query;
+    const sites = await listSites(search);
+    res.json(sites);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/sharepoint/drives/:siteId', adminAuth, async (req, res) => {
+  try {
+    const drives = await listDrives(req.params.siteId);
+    res.json(drives);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Schedule Routes (protected) ─────────────────────────────────────────────
 app.get('/api/schedule/status', adminAuth, (req, res) => {
   res.json(getScheduleStatus());

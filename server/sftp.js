@@ -186,7 +186,7 @@ async function runScheduledUpload() {
   const config = getConfig();
   const lookbackDays = parseInt(config.schedule_lookback_days || '7', 10);
 
-  console.log(`[CRON] Starting scheduled SFTP upload at ${new Date().toISOString()}`);
+  console.log(`[CRON] Starting scheduled upload at ${new Date().toISOString()}`);
   addHistory({ type: 'start', message: 'Scheduled upload started' });
 
   try {
@@ -200,13 +200,45 @@ async function runScheduledUpload() {
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `ringsense-export-${timestamp}.json`;
-    const result = await uploadToSftp(data, filename);
+    const results = [];
 
-    const msg = `Uploaded ${result.recordCount} records to ${result.remoteFile} (${Math.round(result.size / 1024)}KB)`;
-    console.log(`[CRON] ${msg}`);
-    addHistory({ type: 'success', message: msg });
+    // Upload to SFTP if configured
+    if (config.sftp_host && config.schedule_sftp_enabled !== 'false') {
+      try {
+        const sftpResult = await uploadToSftp(data, filename);
+        const msg = `SFTP: Uploaded ${sftpResult.recordCount} records to ${sftpResult.remoteFile} (${Math.round(sftpResult.size / 1024)}KB)`;
+        console.log(`[CRON] ${msg}`);
+        addHistory({ type: 'success', message: msg });
+        results.push({ target: 'sftp', success: true });
+      } catch (err) {
+        const msg = `SFTP upload failed: ${err.message}`;
+        console.error(`[CRON] ${msg}`);
+        addHistory({ type: 'error', message: msg });
+        results.push({ target: 'sftp', success: false, error: err.message });
+      }
+    }
 
-    // Update last run time
+    // Upload to SharePoint if configured
+    if (config.sp_site_id && config.schedule_sharepoint_enabled !== 'false') {
+      try {
+        const { uploadToSharePoint } = require('./sharepoint');
+        const spResult = await uploadToSharePoint(data, filename);
+        const msg = `SharePoint: Uploaded ${spResult.recordCount} records to "${spResult.fileName}" (${spResult.webUrl})`;
+        console.log(`[CRON] ${msg}`);
+        addHistory({ type: 'success', message: msg });
+        results.push({ target: 'sharepoint', success: true });
+      } catch (err) {
+        const msg = `SharePoint upload failed: ${err.message}`;
+        console.error(`[CRON] ${msg}`);
+        addHistory({ type: 'error', message: msg });
+        results.push({ target: 'sharepoint', success: false, error: err.message });
+      }
+    }
+
+    if (results.length === 0) {
+      addHistory({ type: 'skip', message: 'No upload destinations configured (SFTP or SharePoint).' });
+    }
+
     setConfig({ schedule_last_run: new Date().toISOString() });
   } catch (err) {
     const msg = `Upload failed: ${err.message}`;
