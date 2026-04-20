@@ -57,7 +57,8 @@ export const getCalls = (params) => {
   return api(`/api/calls?${qs}`);
 };
 export const getInsights = (recordingId, domain = 'pbx') => {
-  return api(`/api/calls/${recordingId}/insights?domain=${domain}`);
+  const params = new URLSearchParams({ recordingId, domain });
+  return api(`/api/calls/insights?${params}`);
 };
 
 // SFTP
@@ -75,3 +76,4 @@ export const getScheduleHistory = () => api('/api/schedule/history');
 export const subscribeWebhook = (webhookUrl) => api('/api/webhook/subscribe', { method: 'POST', body: JSON.stringify({ webhookUrl }) });
 export const unsubscribeWebhook = () => api('/api/webhook/subscribe', { method: 'DELETE' });
 export const getWebhookStatus = () => api('/api/webhook/status');
+export const clearInteractions = () => api('/api/interactions', { method: 'DELETE' });

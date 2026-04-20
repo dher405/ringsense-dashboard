@@ -464,6 +464,17 @@ function SettingsPage() {
                     {Icons.x} Unsubscribe
                   </button>
                 )}
+                {webhookStatus.storedInteractions > 0 && (
+                  <button className="btn btn-secondary" onClick={async () => {
+                    try {
+                      await API.clearInteractions();
+                      showStatus('success', 'Stored interactions cleared (e.g. after switching accounts).');
+                      loadSchedule();
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.x} Clear Stored Interactions
+                  </button>
+                )}
               </div>
             </div>
           )}

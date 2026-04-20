@@ -115,8 +115,30 @@ app.put('/api/config', adminAuth, (req, res) => {
         delete updates[key];
       }
     }
+
+    // If API credentials are changing, invalidate the cached token
+    const credentialKeys = ['rc_client_id', 'rc_client_secret', 'rc_jwt', 'rc_server_url'];
+    const isCredentialChange = credentialKeys.some(k => updates[k] !== undefined);
+    if (isCredentialChange) {
+      updates.rc_access_token = null;
+      updates.rc_token_expiry = null;
+      console.log('[CONFIG] API credentials changed — cached token cleared');
+    }
+
     setConfig(updates);
     res.json({ success: true, config: getSafeConfig() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear stored webhook interactions (e.g. after switching accounts)
+app.delete('/api/interactions', adminAuth, (req, res) => {
+  try {
+    const fs = require('fs');
+    const storePath = path.join(__dirname, '..', 'data', 'interactions.json');
+    if (fs.existsSync(storePath)) fs.writeFileSync(storePath, '[]');
+    res.json({ success: true, message: 'Stored interactions cleared.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -271,10 +293,11 @@ app.get('/api/calls', adminAuth, async (req, res) => {
   }
 });
 
-app.get('/api/calls/:recordingId/insights', adminAuth, async (req, res) => {
+// Insights — use query param to avoid URL path issues with long RCX IDs
+app.get('/api/calls/insights', adminAuth, async (req, res) => {
   try {
-    const { recordingId } = req.params;
-    const { domain } = req.query;
+    const { recordingId, domain } = req.query;
+    if (!recordingId) return res.status(400).json({ error: 'recordingId query param required' });
     const d = domain || 'pbx';
     console.log(`[INSIGHTS] Fetching: domain=${d}, recordingId=${recordingId} (length=${recordingId.length})`);
     const data = await rcApiFetch(
