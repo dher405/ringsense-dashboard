@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useSearchParams, NavLink } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useSearchParams, NavLink } from 'react-router-dom';
 import * as API from './api';
 import './App.css';
 
@@ -799,7 +799,7 @@ function CallList() {
             const dir = getDirection(call);
             const startTime = getStartTime(call);
             return (
-              <div key={call.id} className="call-card" onClick={() => navigate(`/call/${encodeURIComponent(call.sourceRecordId)}?domain=${call.domain || 'pbx'}`)}>
+              <div key={call.id} className="call-card" onClick={() => navigate(`/call?id=${encodeURIComponent(call.sourceRecordId)}&domain=${call.domain || 'pbx'}`)}>
                 <div className="call-card-top">
                   <div style={{display:'flex',alignItems:'center',gap:6}}>
                     {dir && (
@@ -853,8 +853,8 @@ function CallList() {
 
 // ─── Call Detail ──────────────────────────────────────────────────────────────
 function CallDetail() {
-  const { recordingId } = useParams();
   const [searchParams] = useSearchParams();
+  const recordingId = searchParams.get('id') || '';
   const domain = searchParams.get('domain') || 'pbx';
   const navigate = useNavigate();
   const [insights, setInsights] = useState(null);
@@ -1012,7 +1012,7 @@ function App() {
           <Routes>
             <Route path="/" element={isAuth ? <CallList /> : <AdminLogin />} />
             <Route path="/settings" element={isAuth ? <SettingsPage /> : <AdminLogin />} />
-            <Route path="/call/:recordingId" element={isAuth ? <CallDetail /> : <AdminLogin />} />
+            <Route path="/call" element={isAuth ? <CallDetail /> : <AdminLogin />} />
           </Routes>
         </div>
       </Router>
