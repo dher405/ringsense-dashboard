@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, NavLink } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, useSearchParams, NavLink } from 'react-router-dom';
 import * as API from './api';
 import './App.css';
 
@@ -119,6 +119,8 @@ function SettingsPage() {
   const [status, setStatus] = useState({ type: '', message: '' });
   const [scheduleStatus, setScheduleStatus] = useState({});
   const [scheduleHistory, setScheduleHistory] = useState([]);
+  const [webhookStatus, setWebhookStatus] = useState({});
+  const [webhookUrl, setWebhookUrl] = useState('');
 
   // Form state
   const [form, setForm] = useState({
@@ -177,9 +179,11 @@ function SettingsPage() {
 
   const loadSchedule = useCallback(async () => {
     try {
-      const [sched, hist] = await Promise.all([API.getScheduleStatus(), API.getScheduleHistory()]);
+      const [sched, hist, wh] = await Promise.all([API.getScheduleStatus(), API.getScheduleHistory(), API.getWebhookStatus()]);
       setScheduleStatus(sched);
       setScheduleHistory(hist);
+      setWebhookStatus(wh);
+      if (wh.webhookUrl) setWebhookUrl(wh.webhookUrl);
     } catch {}
   }, []);
 
@@ -298,6 +302,7 @@ function SettingsPage() {
 
   const sections = [
     { key: 'api', label: 'RingCentral API', icon: Icons.phone },
+    { key: 'webhook', label: 'RCX Webhook', icon: Icons.refresh },
     { key: 'sftp', label: 'SFTP Server', icon: Icons.server },
     { key: 'schedule', label: 'Scheduled Uploads', icon: Icons.calendar },
   ];
@@ -396,6 +401,69 @@ function SettingsPage() {
                 <button className="btn btn-secondary" onClick={handleTestRc} disabled={saving}>
                   {Icons.play} Test Connection
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Webhook Section ─────────────────────────────────────────── */}
+          {activeSection === 'webhook' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h3>RingCX Webhook Subscription</h3>
+                <p>RingCX interactions require a webhook subscription to capture call data. RingSense events are pushed to your server in real-time as calls complete.</p>
+              </div>
+
+              <div className="form-group">
+                <label>Webhook URL</label>
+                <input type="text" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder={`${window.location.origin}/api/webhook/ringsense`} />
+                <span className="form-hint">This must be publicly accessible. Use your Render URL: https://your-app.onrender.com/api/webhook/ringsense</span>
+              </div>
+
+              <div className="schedule-status-card" style={{marginTop: 12, marginBottom: 16}}>
+                <h4>Webhook Status</h4>
+                <div className="status-grid">
+                  <div className="status-item">
+                    <span className="status-label">Status</span>
+                    <span className={`status-value ${webhookStatus.active ? 'active-text' : ''}`}>
+                      {webhookStatus.active ? 'Active' : webhookStatus.expired ? 'Expired' : 'Not subscribed'}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">Stored RCX Interactions</span>
+                    <span className="status-value">{webhookStatus.storedInteractions || 0}</span>
+                  </div>
+                  {webhookStatus.expiresAt && (
+                    <div className="status-item">
+                      <span className="status-label">Expires</span>
+                      <span className="status-value">{new Date(webhookStatus.expiresAt).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-actions-row">
+                <button className="btn btn-primary" onClick={async () => {
+                  showStatus('info', 'Creating webhook subscription...');
+                  try {
+                    const url = webhookUrl || `${window.location.origin}/api/webhook/ringsense`;
+                    const res = await API.subscribeWebhook(url);
+                    showStatus('success', res.message);
+                    loadSchedule();
+                  } catch (err) { showStatus('error', err.message); }
+                }}>
+                  {Icons.check} Subscribe to RingSense Events
+                </button>
+                {webhookStatus.active && (
+                  <button className="btn btn-secondary" onClick={async () => {
+                    try {
+                      await API.unsubscribeWebhook();
+                      showStatus('success', 'Webhook subscription removed.');
+                      loadSchedule();
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.x} Unsubscribe
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -613,12 +681,14 @@ function CallList() {
   const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0]; });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [counts, setCounts] = useState({ pbx: 0, rcx: 0 });
 
   const loadCalls = useCallback(async () => {
     setLoading(true); setError('');
     try {
       const data = await API.getCalls({ dateFrom: new Date(dateFrom).toISOString(), dateTo: new Date(dateTo + 'T23:59:59').toISOString() });
       setCalls(data.records || []);
+      setCounts({ pbx: data.pbxCount || 0, rcx: data.rcxCount || 0 });
     } catch (err) {
       setError(err.message);
     } finally { setLoading(false); }
@@ -629,26 +699,75 @@ function CallList() {
   const filteredCalls = calls.filter(call => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
-    return (call.from?.name||'').toLowerCase().includes(q) || (call.to?.name||'').toLowerCase().includes(q) || (call.from?.phoneNumber||'').includes(q) || (call.to?.phoneNumber||'').includes(q);
+    const title = (call.title || '').toLowerCase();
+    const fromName = (call.from?.name || '').toLowerCase();
+    const toName = (call.to?.name || '').toLowerCase();
+    const fromNum = call.from?.phoneNumber || '';
+    const toNum = call.to?.phoneNumber || '';
+    const speakers = (call.speakerInfo || []).map(s => (s.name || '').toLowerCase()).join(' ');
+    return title.includes(q) || fromName.includes(q) || toName.includes(q) || fromNum.includes(q) || toNum.includes(q) || speakers.includes(q);
   });
 
-  const fmtDur = (s) => { if(!s)return '0:00'; return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; };
-  const fmtDate = (d) => new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-  const fmtTime = (d) => new Date(d).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  const fmtDurSec = (s) => { if(!s)return '0:00'; return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; };
+  const fmtDurMs = (ms) => { if(!ms)return null; const s=Math.floor(ms/1000); return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`; };
+  const fmtDate = (d) => { if(!d) return ''; return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+  const fmtTime = (d) => { if(!d) return ''; return new Date(d).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); };
+
+  // Unified card renderer that works for both PBX and RCX records
+  const getCardName = (call, side) => {
+    // PBX records have from/to
+    if (call.source === 'calllog' && call[side]) {
+      return call[side].name || call[side].phoneNumber || 'Unknown';
+    }
+    // RCX records: parse from title or speakerInfo
+    if (call.speakerInfo && call.speakerInfo.length > 0) {
+      const idx = side === 'from' ? 0 : Math.min(1, call.speakerInfo.length - 1);
+      return call.speakerInfo[idx]?.name || call.speakerInfo[idx]?.phoneNumber || 'Unknown';
+    }
+    return call.title || 'Unknown';
+  };
+
+  const getCardNumber = (call, side) => {
+    if (call.source === 'calllog' && call[side]?.phoneNumber && call[side]?.name) {
+      return call[side].phoneNumber;
+    }
+    if (call.speakerInfo) {
+      const idx = side === 'from' ? 0 : Math.min(1, call.speakerInfo.length - 1);
+      const sp = call.speakerInfo[idx];
+      if (sp?.phoneNumber && sp?.name) return sp.phoneNumber;
+    }
+    return null;
+  };
+
+  const getDuration = (call) => {
+    if (call.duration) return fmtDurSec(call.duration);
+    if (call.recordingDurationMs) return fmtDurMs(call.recordingDurationMs);
+    return '0:00';
+  };
+
+  const getDirection = (call) => call.callDirection || call.direction || null;
+  const getStartTime = (call) => call.recordingStartTime || call.startTime || call.creationTime;
 
   return (
     <div className="main-content">
       <div className="page-header">
         <div>
           <h2 className="page-title">Call Interactions</h2>
-          <p className="page-desc">{calls.length} recorded calls found</p>
+          <p className="page-desc">
+            {calls.length} recorded calls found
+            {(counts.pbx > 0 || counts.rcx > 0) && (
+              <span style={{marginLeft: 8, fontSize: 12}}>
+                ({counts.pbx} PBX{counts.rcx > 0 ? `, ${counts.rcx} RingCX` : ''})
+              </span>
+            )}
+          </p>
         </div>
       </div>
 
       <div className="filters-bar">
         <div className="search-box">
           {Icons.search}
-          <input type="text" placeholder="Search by name or number..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          <input type="text" placeholder="Search by name, number, or title..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
         </div>
         <div className="date-filters">
           <div className="date-input-group"><label>From</label><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
@@ -662,39 +781,59 @@ function CallList() {
       {loading ? (
         <div className="loading-state"><div className="spinner-lg"/><p>Fetching call recordings...</p></div>
       ) : filteredCalls.length === 0 ? (
-        <div className="empty-state">{Icons.phone}<h3>No recorded calls found</h3><p>Try adjusting your date range or check API settings</p></div>
+        <div className="empty-state">{Icons.phone}<h3>No recorded calls found</h3><p>Try adjusting your date range or check API settings. RingCX calls require webhook subscription.</p></div>
       ) : (
         <div className="call-grid">
-          {filteredCalls.map(call => (
-            <div key={call.id} className="call-card" onClick={() => navigate(`/call/${call.recording.id}`)}>
-              <div className="call-card-top">
-                <div className={`direction-badge ${call.direction?.toLowerCase()}`}>
-                  {call.direction === 'Inbound' ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="7 7 17 17"/><polyline points="17 7 17 17 7 17"/></svg> : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="17 7 7 17"/><polyline points="7 7 7 17 17 17"/></svg>}
-                  {call.direction}
+          {filteredCalls.map(call => {
+            const dir = getDirection(call);
+            const startTime = getStartTime(call);
+            return (
+              <div key={call.id} className="call-card" onClick={() => navigate(`/call/${encodeURIComponent(call.sourceRecordId)}?domain=${call.domain || 'pbx'}`)}>
+                <div className="call-card-top">
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    {dir && (
+                      <div className={`direction-badge ${dir.toLowerCase()}`}>
+                        {dir === 'Inbound' ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="7 7 17 17"/><polyline points="17 7 17 17 7 17"/></svg> : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="17 7 7 17"/><polyline points="7 7 7 17 17 17"/></svg>}
+                        {dir}
+                      </div>
+                    )}
+                    <span className={`domain-badge ${call.domain}`}>{call.domain === 'rcx' ? 'RingCX' : call.domain === 'rcv' ? 'Video' : 'PBX'}</span>
+                  </div>
+                  <span className="call-duration">{getDuration(call)}</span>
                 </div>
-                <span className="call-duration">{fmtDur(call.duration)}</span>
-              </div>
-              <div className="call-participants">
-                <div className="participant">
-                  <span className="participant-label">From</span>
-                  <span className="participant-name">{call.from?.name || call.from?.phoneNumber || 'Unknown'}</span>
-                  {call.from?.phoneNumber && call.from?.name && <span className="participant-number">{call.from.phoneNumber}</span>}
+
+                {call.source === 'webhook' && call.title ? (
+                  <div className="call-title-row">
+                    <span className="call-title">{call.title}</span>
+                    {call.speakerInfo && call.speakerInfo.length > 0 && (
+                      <span className="call-speakers">{call.speakerInfo.map(s => s.name || 'Unknown').join(', ')}</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="call-participants">
+                    <div className="participant">
+                      <span className="participant-label">From</span>
+                      <span className="participant-name">{getCardName(call, 'from')}</span>
+                      {getCardNumber(call, 'from') && <span className="participant-number">{getCardNumber(call, 'from')}</span>}
+                    </div>
+                    <div className="call-arrow">{Icons.arrow}</div>
+                    <div className="participant">
+                      <span className="participant-label">To</span>
+                      <span className="participant-name">{getCardName(call, 'to')}</span>
+                      {getCardNumber(call, 'to') && <span className="participant-number">{getCardNumber(call, 'to')}</span>}
+                    </div>
+                  </div>
+                )}
+
+                <div className="call-card-footer">
+                  <span className="call-date">{fmtDate(startTime)}</span>
+                  <span className="call-time">{fmtTime(startTime)}</span>
+                  {call.result && <span className="call-result">{call.result}</span>}
                 </div>
-                <div className="call-arrow">{Icons.arrow}</div>
-                <div className="participant">
-                  <span className="participant-label">To</span>
-                  <span className="participant-name">{call.to?.name || call.to?.phoneNumber || 'Unknown'}</span>
-                  {call.to?.phoneNumber && call.to?.name && <span className="participant-number">{call.to.phoneNumber}</span>}
-                </div>
+                <div className="card-hover-hint"><span>View Insights</span>{Icons.arrow}</div>
               </div>
-              <div className="call-card-footer">
-                <span className="call-date">{fmtDate(call.startTime)}</span>
-                <span className="call-time">{fmtTime(call.startTime)}</span>
-                <span className="call-result">{call.result}</span>
-              </div>
-              <div className="card-hover-hint"><span>View Insights</span>{Icons.arrow}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -704,6 +843,8 @@ function CallList() {
 // ─── Call Detail ──────────────────────────────────────────────────────────────
 function CallDetail() {
   const { recordingId } = useParams();
+  const [searchParams] = useSearchParams();
+  const domain = searchParams.get('domain') || 'pbx';
   const navigate = useNavigate();
   const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -714,12 +855,12 @@ function CallDetail() {
     (async () => {
       setLoading(true); setError('');
       try {
-        const data = await API.getInsights(recordingId);
+        const data = await API.getInsights(recordingId, domain);
         setInsights(data);
       } catch (err) { setError(err.message); }
       finally { setLoading(false); }
     })();
-  }, [recordingId]);
+  }, [recordingId, domain]);
 
   const fmtMs = (ms) => { if(!ms&&ms!==0)return''; const t=Math.floor(ms/1000); return `${Math.floor(t/60)}:${(t%60).toString().padStart(2,'0')}`; };
   const fmtDur = (ms) => { if(!ms)return'N/A'; const t=Math.floor(ms/1000); return `${Math.floor(t/60)}m ${t%60}s`; };

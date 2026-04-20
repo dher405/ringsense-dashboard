@@ -70,3 +70,8 @@ export const startSchedule = () => api('/api/schedule/start', { method: 'POST' }
 export const stopSchedule = () => api('/api/schedule/stop', { method: 'POST' });
 export const runScheduleNow = () => api('/api/schedule/run-now', { method: 'POST' });
 export const getScheduleHistory = () => api('/api/schedule/history');
+
+// Webhook
+export const subscribeWebhook = (webhookUrl) => api('/api/webhook/subscribe', { method: 'POST', body: JSON.stringify({ webhookUrl }) });
+export const unsubscribeWebhook = () => api('/api/webhook/subscribe', { method: 'DELETE' });
+export const getWebhookStatus = () => api('/api/webhook/status');

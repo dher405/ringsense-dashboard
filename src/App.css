@@ -339,6 +339,20 @@ html, body {
 }
 .call-card:hover .card-hover-hint { opacity: 1; transform: translateY(0); }
 
+/* Domain badges */
+.domain-badge {
+  font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.domain-badge.pbx { background: rgba(99,102,241,0.1); color: #A5B4FC; }
+.domain-badge.rcx { background: rgba(244,121,32,0.12); color: #F9A85C; }
+.domain-badge.rcv { background: rgba(16,185,129,0.1); color: #6EE7B7; }
+
+/* RCX title row (webhook-sourced cards) */
+.call-title-row { margin-bottom: 16px; }
+.call-title { display: block; font-size: 14px; font-weight: 500; line-height: 1.4; }
+.call-speakers { display: block; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
 /* ─── Detail View ────────────────────────────────────────────────────────── */
 .detail-header { margin-bottom: 24px; }
 .detail-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
