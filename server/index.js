@@ -423,23 +423,50 @@ app.get('/api/webhook/status', adminAuth, async (req, res) => {
   try {
     const config = getConfig();
     const subId = config.webhook_subscription_id;
-    if (!subId) {
-      return res.json({ active: false, storedInteractions: getInteractionCount() });
+    let knownSub = null;
+    let orphanedCount = 0;
+
+    // Check the stored subscription
+    if (subId) {
+      try {
+        knownSub = await rcApiFetch(`/restapi/v1.0/subscription/${subId}`);
+      } catch {
+        knownSub = null;
+      }
     }
 
+    // Also scan for any RingSense webhook subscriptions we don't know about
     try {
-      const sub = await rcApiFetch(`/restapi/v1.0/subscription/${subId}`);
+      const data = await rcApiFetch('/restapi/v1.0/subscription');
+      const allSubs = data.records || [];
+      for (const sub of allSubs) {
+        if (sub.id === subId) continue;
+        const isWebhook = sub.deliveryMode?.transportType === 'WebHook';
+        const isRingSense = (sub.eventFilters || []).some(f => f.includes('ringsense'));
+        if (isWebhook && isRingSense && sub.status === 'Active') {
+          orphanedCount++;
+        }
+      }
+    } catch {}
+
+    if (knownSub) {
       return res.json({
-        active: sub.status === 'Active',
-        subscriptionId: sub.id,
-        status: sub.status,
-        expiresAt: sub.expirationTime,
+        active: knownSub.status === 'Active',
+        subscriptionId: knownSub.id,
+        status: knownSub.status,
+        expiresAt: knownSub.expirationTime,
         webhookUrl: config.webhook_url,
         storedInteractions: getInteractionCount(),
+        orphanedSubscriptions: orphanedCount,
       });
-    } catch {
-      return res.json({ active: false, expired: true, storedInteractions: getInteractionCount() });
     }
+
+    return res.json({
+      active: false,
+      expired: !!subId,
+      storedInteractions: getInteractionCount(),
+      orphanedSubscriptions: orphanedCount,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -447,15 +474,58 @@ app.get('/api/webhook/status', adminAuth, async (req, res) => {
 
 app.delete('/api/webhook/subscribe', adminAuth, async (req, res) => {
   try {
+    const results = [];
+
+    // 1. Try to delete the stored subscription ID
     const config = getConfig();
     const subId = config.webhook_subscription_id;
     if (subId) {
       try {
         await rcApiFetch(`/restapi/v1.0/subscription/${subId}`, { method: 'DELETE' });
-      } catch {}
-      setConfig({ webhook_subscription_id: null, webhook_url: null });
+        results.push({ id: subId, deleted: true, source: 'stored' });
+        console.log(`[WEBHOOK] Deleted stored subscription: ${subId}`);
+      } catch (err) {
+        results.push({ id: subId, deleted: false, error: err.message, source: 'stored' });
+        console.warn(`[WEBHOOK] Failed to delete stored subscription ${subId}: ${err.message}`);
+      }
     }
-    res.json({ success: true });
+
+    // 2. Also fetch ALL subscriptions and delete any webhook subscriptions pointing to our endpoint
+    try {
+      const data = await rcApiFetch('/restapi/v1.0/subscription');
+      const allSubs = data.records || [];
+      for (const sub of allSubs) {
+        const addr = sub.deliveryMode?.address || '';
+        const isWebhook = sub.deliveryMode?.transportType === 'WebHook';
+        const isOurs = addr.includes('/api/webhook/ringsense');
+        const isRingSense = (sub.eventFilters || []).some(f => f.includes('ringsense'));
+
+        if (isWebhook && (isOurs || isRingSense)) {
+          // Skip if we already deleted it above
+          if (sub.id === subId) continue;
+          try {
+            await rcApiFetch(`/restapi/v1.0/subscription/${sub.id}`, { method: 'DELETE' });
+            results.push({ id: sub.id, deleted: true, source: 'scan', address: addr });
+            console.log(`[WEBHOOK] Deleted additional subscription: ${sub.id} (${addr})`);
+          } catch (err) {
+            results.push({ id: sub.id, deleted: false, error: err.message, source: 'scan' });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[WEBHOOK] Could not scan for additional subscriptions: ${err.message}`);
+    }
+
+    setConfig({ webhook_subscription_id: null, webhook_url: null });
+
+    const deletedCount = results.filter(r => r.deleted).length;
+    res.json({
+      success: true,
+      message: deletedCount > 0
+        ? `Deleted ${deletedCount} subscription(s).`
+        : 'No active subscriptions found to delete.',
+      results,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

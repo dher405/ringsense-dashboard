@@ -438,6 +438,12 @@ function SettingsPage() {
                       <span className="status-value">{new Date(webhookStatus.expiresAt).toLocaleString()}</span>
                     </div>
                   )}
+                  {webhookStatus.orphanedSubscriptions > 0 && (
+                    <div className="status-item">
+                      <span className="status-label">Orphaned Subscriptions</span>
+                      <span className="status-value" style={{color: 'var(--warning)'}}>{webhookStatus.orphanedSubscriptions} found — click "Unsubscribe All" to clean up</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -453,15 +459,16 @@ function SettingsPage() {
                 }}>
                   {Icons.check} Subscribe to RingSense Events
                 </button>
-                {webhookStatus.active && (
+                {(webhookStatus.active || webhookStatus.orphanedSubscriptions > 0) && (
                   <button className="btn btn-secondary" onClick={async () => {
+                    showStatus('info', 'Removing all RingSense webhook subscriptions on this account...');
                     try {
-                      await API.unsubscribeWebhook();
-                      showStatus('success', 'Webhook subscription removed.');
+                      const res = await API.unsubscribeWebhook();
+                      showStatus('success', res.message || 'Webhook subscriptions removed.');
                       loadSchedule();
                     } catch (err) { showStatus('error', err.message); }
                   }}>
-                    {Icons.x} Unsubscribe
+                    {Icons.x} Unsubscribe All
                   </button>
                 )}
                 {webhookStatus.storedInteractions > 0 && (
