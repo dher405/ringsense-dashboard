@@ -86,6 +86,7 @@ export const testSharePoint = () => api('/api/sharepoint/test', { method: 'POST'
 export const uploadSharePointNow = (daysBack = 7) => api('/api/sharepoint/upload-now', { method: 'POST', body: JSON.stringify({ daysBack }) });
 export const searchSharePointSites = (search) => api(`/api/sharepoint/sites?search=${encodeURIComponent(search || '')}`);
 export const listSharePointDrives = (siteId) => api(`/api/sharepoint/drives/${siteId}`);
+export const lookupSharePointSite = (url) => api('/api/sharepoint/lookup', { method: 'POST', body: JSON.stringify({ url }) });
 
 // Schedule
 export const getScheduleStatus = () => api('/api/schedule/status');

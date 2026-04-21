@@ -359,7 +359,8 @@ app.put('/api/config', adminAuth, (req, res) => {
 app.delete('/api/interactions', adminAuth, (req, res) => {
   try {
     const fs = require('fs');
-    const storePath = path.join(__dirname, '..', 'data', 'interactions.json');
+    const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+    const storePath = path.join(dataDir, 'interactions.json');
     if (fs.existsSync(storePath)) fs.writeFileSync(storePath, '[]');
     res.json({ success: true, message: 'Stored interactions cleared.' });
   } catch (err) {
@@ -820,7 +821,7 @@ app.post('/api/sftp/upload-now', adminAuth, async (req, res) => {
 });
 
 // ─── SharePoint Routes (protected) ──────────────────────────────────────────
-const { uploadToSharePoint, testSharePointConnection, listSites, listDrives } = require('./sharepoint');
+const { uploadToSharePoint, testSharePointConnection, listSites, listDrives, lookupSiteByUrl } = require('./sharepoint');
 
 app.post('/api/sharepoint/test', adminAuth, async (req, res) => {
   try {
@@ -863,6 +864,17 @@ app.get('/api/sharepoint/drives/:siteId', adminAuth, async (req, res) => {
     res.json(drives);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/sharepoint/lookup', adminAuth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required.' });
+    const site = await lookupSiteByUrl(url);
+    res.json(site);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

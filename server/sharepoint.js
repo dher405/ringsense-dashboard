@@ -182,9 +182,51 @@ async function listDrives(siteId) {
   }));
 }
 
+// ─── Lookup site by URL ──────────────────────────────────────────────────────
+async function lookupSiteByUrl(siteUrl) {
+  const token = await getGraphToken();
+
+  // Parse the URL: https://tenant.sharepoint.com/sites/SiteName
+  let hostname, sitePath;
+  try {
+    const parsed = new URL(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`);
+    hostname = parsed.hostname;
+    sitePath = parsed.pathname.replace(/\/+$/, ''); // remove trailing slash
+  } catch {
+    throw new Error('Invalid URL format. Expected: https://tenant.sharepoint.com/sites/SiteName');
+  }
+
+  if (!sitePath || sitePath === '/') {
+    // Root site
+    const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${hostname}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Site lookup failed: ${err.slice(0, 200)}`);
+    }
+    const site = await res.json();
+    return { id: site.id, name: site.displayName, webUrl: site.webUrl };
+  }
+
+  // Subsite: /sites/SiteName
+  const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${hostname}:${sitePath}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Site lookup failed: ${err.slice(0, 200)}`);
+  }
+
+  const site = await res.json();
+  return { id: site.id, name: site.displayName, webUrl: site.webUrl };
+}
+
 module.exports = {
   uploadToSharePoint,
   testSharePointConnection,
   listSites,
   listDrives,
+  lookupSiteByUrl,
 };

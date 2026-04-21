@@ -3,7 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { encrypt, decrypt } = require('./crypto');
 
-const USERS_PATH = path.join(__dirname, '..', 'data', 'users.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const USERS_PATH = path.join(DATA_DIR, 'users.json');
 
 function ensureDir() {
   const dir = path.dirname(USERS_PATH);

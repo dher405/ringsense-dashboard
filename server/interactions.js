@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const INTERACTIONS_PATH = path.join(__dirname, '..', 'data', 'interactions.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const INTERACTIONS_PATH = path.join(DATA_DIR, 'interactions.json');
 
 function ensureDir() {
   const dir = path.dirname(INTERACTIONS_PATH);

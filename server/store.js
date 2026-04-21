@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { encrypt, decrypt } = require('./crypto');
 
-const STORE_PATH = path.join(__dirname, '..', 'data', 'config.enc.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const STORE_PATH = path.join(DATA_DIR, 'config.enc.json');
 
 // Fields that must be encrypted at rest
 const SENSITIVE_FIELDS = [

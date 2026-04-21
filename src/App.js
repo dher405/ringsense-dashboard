@@ -891,6 +891,18 @@ function SettingsPage() {
                 <div style={{display: 'flex', gap: 8}}>
                   <input type="text" value={form.sp_site_id} onChange={e => updateField('sp_site_id', e.target.value)} placeholder="e.g. contoso.sharepoint.com,guid,guid" style={{flex: 1}} />
                   <button className="btn btn-secondary" style={{whiteSpace: 'nowrap'}} onClick={async () => {
+                    const url = prompt('Enter your SharePoint site URL:\n\ne.g. https://company.sharepoint.com/sites/MySite');
+                    if (!url) return;
+                    showStatus('info', 'Looking up site...');
+                    try {
+                      const site = await API.lookupSharePointSite(url);
+                      updateField('sp_site_id', site.id);
+                      showStatus('success', `Found site: "${site.name}" (${site.webUrl})`);
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.search} Lookup by URL
+                  </button>
+                  <button className="btn btn-secondary" style={{whiteSpace: 'nowrap'}} onClick={async () => {
                     const search = prompt('Search for a SharePoint site by name:');
                     if (!search) return;
                     try {
@@ -904,10 +916,10 @@ function SettingsPage() {
                       }
                     } catch (err) { showStatus('error', err.message); }
                   }}>
-                    {Icons.search} Search Sites
+                    {Icons.search} Search by Name
                   </button>
                 </div>
-                <span className="form-hint">The full site ID from Microsoft Graph. Use "Search Sites" to find it.</span>
+                <span className="form-hint">Paste your SharePoint URL and click "Lookup by URL", or search by site name.</span>
               </div>
 
               <div className="form-group">
