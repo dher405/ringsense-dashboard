@@ -1231,6 +1231,26 @@ function SettingsPage() {
                                 <option value="admin">Admin</option>
                               </select>
                               <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11}} onClick={async () => {
+                                const newPass = prompt(`Set new password for ${user.email}:`);
+                                if (!newPass) return;
+                                if (newPass.length < 6) { showStatus('error', 'Password must be at least 6 characters.'); return; }
+                                try {
+                                  await API.updateUserApi(user.id, { password: newPass });
+                                  showStatus('success', `Password set for ${user.email}.`);
+                                  loadUsers();
+                                } catch (err) { showStatus('error', err.message); }
+                              }}>
+                                Set Password
+                              </button>
+                              <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11}} onClick={async () => {
+                                try {
+                                  await API.forgotPassword(user.email);
+                                  showStatus('success', `Password reset email sent to ${user.email}.`);
+                                } catch (err) { showStatus('error', err.message); }
+                              }}>
+                                Send Reset Email
+                              </button>
+                              <button className="btn btn-ghost" style={{padding: '4px 8px', fontSize: 11}} onClick={async () => {
                                 try {
                                   await API.updateUserApi(user.id, { enabled: !user.enabled });
                                   showStatus('success', `User ${user.enabled ? 'disabled' : 'enabled'}.`);
