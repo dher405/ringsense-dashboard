@@ -221,11 +221,19 @@ async function runScheduledUpload() {
     // Upload to SharePoint if configured
     if (config.sp_site_id && config.schedule_sharepoint_enabled !== 'false') {
       try {
-        const { uploadToSharePoint } = require('./sharepoint');
-        const spResult = await uploadToSharePoint(data, filename);
-        const msg = `SharePoint: Uploaded ${spResult.recordCount} records to "${spResult.fileName}" (${spResult.webUrl})`;
-        console.log(`[CRON] ${msg}`);
-        addHistory({ type: 'success', message: msg });
+        const { uploadToSharePoint, uploadToSharePointAsZip } = require('./sharepoint');
+        let spResult;
+        if (config.sp_export_format === 'zip_txt') {
+          spResult = await uploadToSharePointAsZip(data);
+          const msg = `SharePoint: Uploaded ${spResult.recordCount} calls as "${spResult.fileName}" (ZIP of TXT files, ${Math.round(spResult.size / 1024)}KB) — ${spResult.webUrl}`;
+          console.log(`[CRON] ${msg}`);
+          addHistory({ type: 'success', message: msg });
+        } else {
+          spResult = await uploadToSharePoint(data, filename);
+          const msg = `SharePoint: Uploaded ${spResult.recordCount} records to "${spResult.fileName}" (${spResult.webUrl})`;
+          console.log(`[CRON] ${msg}`);
+          addHistory({ type: 'success', message: msg });
+        }
         results.push({ target: 'sharepoint', success: true });
       } catch (err) {
         const msg = `SharePoint upload failed: ${err.message}`;

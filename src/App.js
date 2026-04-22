@@ -355,6 +355,7 @@ function SettingsPage() {
     sp_drive_id: '',
     sp_folder_path: '/RingSense Exports',
     sp_use_sso_creds: 'true',
+    sp_export_format: 'zip_txt',
     schedule_sftp_enabled: 'true',
     schedule_sharepoint_enabled: 'true',
     smtp_host: '',
@@ -404,6 +405,7 @@ function SettingsPage() {
         sp_drive_id: data.sp_drive_id || '',
         sp_folder_path: data.sp_folder_path || '/RingSense Exports',
         sp_use_sso_creds: data.sp_use_sso_creds || 'true',
+        sp_export_format: data.sp_export_format || 'zip_txt',
         schedule_sftp_enabled: data.schedule_sftp_enabled || 'true',
         schedule_sharepoint_enabled: data.schedule_sharepoint_enabled || 'true',
         smtp_host: data.smtp_host || '',
@@ -952,6 +954,25 @@ function SettingsPage() {
                 <span className="form-hint">Folder within the document library. Will be created if it doesn't exist.</span>
               </div>
 
+              <div className="form-group">
+                <label>Export Format</label>
+                <div className="radio-group">
+                  <label className={`radio-option ${form.sp_export_format === 'zip_txt' ? 'selected' : ''}`}>
+                    <input type="radio" name="sp_export_format" value="zip_txt" checked={form.sp_export_format !== 'json'} onChange={() => updateField('sp_export_format', 'zip_txt')} />
+                    <span>Individual TXT files in ZIP</span>
+                  </label>
+                  <label className={`radio-option ${form.sp_export_format === 'json' ? 'selected' : ''}`}>
+                    <input type="radio" name="sp_export_format" value="json" checked={form.sp_export_format === 'json'} onChange={() => updateField('sp_export_format', 'json')} />
+                    <span>Single JSON file</span>
+                  </label>
+                </div>
+                <span className="form-hint">
+                  {form.sp_export_format !== 'json'
+                    ? 'Each call gets its own .txt file named by date, time, and phone numbers — all bundled in a timestamped ZIP.'
+                    : 'All call records exported as a single JSON file (legacy format).'}
+                </span>
+              </div>
+
               <div className="form-actions-row">
                 <button className="btn btn-primary" onClick={async () => {
                   setSaving(true);
@@ -961,6 +982,7 @@ function SettingsPage() {
                       sp_drive_id: form.sp_drive_id,
                       sp_folder_path: form.sp_folder_path,
                       sp_use_sso_creds: form.sp_use_sso_creds,
+                      sp_export_format: form.sp_export_format,
                     };
                     if (form.sp_use_sso_creds !== 'true') {
                       updates.sp_tenant_id = form.sp_tenant_id;
@@ -991,7 +1013,10 @@ function SettingsPage() {
                   showStatus('info', 'Uploading to SharePoint...');
                   try {
                     const res = await API.uploadSharePointNow(parseInt(form.schedule_lookback_days || '7'));
-                    showStatus('success', res.message || `Uploaded ${res.recordCount} records to "${res.fileName}"`);
+                    const detail = res.format === 'zip_txt'
+                      ? `Uploaded ${res.recordCount} calls as "${res.fileName}" (ZIP of individual TXT files)`
+                      : `Uploaded ${res.recordCount} records to "${res.fileName}"`;
+                    showStatus('success', res.message || detail);
                   } catch (err) { showStatus('error', err.message); }
                 }}>
                   {Icons.upload} Upload Now
