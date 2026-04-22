@@ -228,6 +228,71 @@ async function uploadToSharePointByAgent(calls) {
   };
 }
 
+// ─── Get Graph API access token using client credentials ─────────────────────
+async function getGraphToken() {
+  const config = getConfig();
+  const tenantId     = config.sp_tenant_id     || config.sso_tenant_id;
+  const clientId     = config.sp_client_id     || config.sso_client_id;
+  const clientSecret = config.sp_client_secret || config.sso_client_secret;
+
+  if (!tenantId || !clientId || !clientSecret) {
+    throw new Error('SharePoint not configured. Set tenant ID, client ID, and client secret in Settings → SharePoint.');
+  }
+
+  // Return cached token if still valid
+  const cachedToken  = config.sp_graph_token;
+  const cachedExpiry = parseInt(config.sp_graph_token_expiry || '0', 10);
+  if (cachedToken && cachedExpiry > Date.now() + 60000) {
+    return cachedToken;
+  }
+
+  const res = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     clientId,
+      client_secret: clientSecret,
+      scope:         'https://graph.microsoft.com/.default',
+      grant_type:    'client_credentials',
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Graph auth failed: ${err.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  setConfig({
+    sp_graph_token:        data.access_token,
+    sp_graph_token_expiry: String(Date.now() + data.expires_in * 1000),
+  });
+
+  return data.access_token;
+}
+
+// ─── Upload a raw buffer to a SharePoint path ─────────────────────────────────
+async function _uploadBuffer(token, siteId, driveId, folderPath, filename, buffer, contentType) {
+  const cleanPath = (folderPath || '/RingSense Exports').replace(/^\/+|\/+$/g, '');
+  let uploadUrl;
+  if (driveId) {
+    uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${cleanPath}/${filename}:/content`;
+  } else {
+    uploadUrl = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${cleanPath}/${filename}:/content`;
+  }
+  console.log(`[SHAREPOINT] Uploading ${filename} to: ${uploadUrl} (${Math.round(buffer.length / 1024)}KB)`);
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': contentType },
+    body: buffer,
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`SharePoint upload failed (${res.status}): ${errBody.slice(0, 300)}`);
+  }
+  return await res.json();
+}
+
 // ─── Upload file to SharePoint (JSON format, legacy/default) ─────────────────
 async function uploadToSharePoint(data, filename) {
   const config = getConfig();
