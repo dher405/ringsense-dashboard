@@ -319,6 +319,7 @@ function SettingsPage() {
   const [users, setUsers] = useState([]);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'viewer' });
   const [editingUser, setEditingUser] = useState(null);
+  const [spDiagnostics, setSpDiagnostics] = useState(null);
 
   // Form state
   const [form, setForm] = useState({
@@ -1003,6 +1004,22 @@ function SettingsPage() {
                   <p>Your Azure app registration needs the <strong>Sites.ReadWrite.All</strong> application permission (not delegated) to upload files via the Graph API.</p>
                   <p style={{marginTop: 6}}>In Azure Portal → App registrations → API permissions → Add permission → Microsoft Graph → Application permissions → Sites.ReadWrite.All → Grant admin consent.</p>
                 </div>
+                <div style={{marginTop: 12}}>
+                  <button className="btn btn-secondary" onClick={async () => {
+                    showStatus('info', 'Running SharePoint diagnostics...');
+                    try {
+                      const res = await API.debugSharePoint();
+                      const formatted = JSON.stringify(res, null, 2);
+                      showStatus('success', 'Diagnostics complete — see results below.');
+                      setSpDiagnostics(formatted);
+                    } catch (err) { showStatus('error', err.message); }
+                  }}>
+                    {Icons.search} Run Diagnostics
+                  </button>
+                </div>
+                {spDiagnostics && (
+                  <pre style={{marginTop: 12, padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'auto', maxHeight: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all'}}>{spDiagnostics}</pre>
+                )}
               </div>
             </div>
           )}
