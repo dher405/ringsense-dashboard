@@ -191,36 +191,141 @@ async function lookupSiteByUrl(siteUrl) {
   try {
     const parsed = new URL(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`);
     hostname = parsed.hostname;
-    sitePath = parsed.pathname.replace(/\/+$/, ''); // remove trailing slash
+    sitePath = parsed.pathname.replace(/\/+$/, '');
   } catch {
     throw new Error('Invalid URL format. Expected: https://tenant.sharepoint.com/sites/SiteName');
   }
 
-  if (!sitePath || sitePath === '/') {
-    // Root site
-    const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${hostname}`, {
+  console.log(`[SHAREPOINT] Lookup: hostname=${hostname}, path=${sitePath}`);
+  const errors = [];
+
+  // Approach 1: hostname:/path (standard Graph format for subsites)
+  if (sitePath && sitePath !== '/') {
+    try {
+      const url = `https://graph.microsoft.com/v1.0/sites/${hostname}:${sitePath}`;
+      console.log(`[SHAREPOINT] Try 1: ${url}`);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const site = await res.json();
+        return { id: site.id, name: site.displayName, webUrl: site.webUrl };
+      }
+      const err = await res.text();
+      errors.push(`Approach 1 (${res.status}): ${err.slice(0, 150)}`);
+    } catch (e) { errors.push(`Approach 1: ${e.message}`); }
+  }
+
+  // Approach 2: hostname only (root site)
+  try {
+    const url = `https://graph.microsoft.com/v1.0/sites/${hostname}`;
+    console.log(`[SHAREPOINT] Try 2: ${url}`);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      const site = await res.json();
+      // If they asked for a subsite but we only got root, note that
+      if (sitePath && sitePath !== '/' && sitePath !== '') {
+        return { id: site.id, name: site.displayName, webUrl: site.webUrl, note: 'Root site returned — subsite lookup failed. Try the search approach.' };
+      }
+      return { id: site.id, name: site.displayName, webUrl: site.webUrl };
+    }
+    const err = await res.text();
+    errors.push(`Approach 2 (${res.status}): ${err.slice(0, 150)}`);
+  } catch (e) { errors.push(`Approach 2: ${e.message}`); }
+
+  // Approach 3: search by site name extracted from path
+  const siteName = sitePath.split('/').filter(Boolean).pop();
+  if (siteName) {
+    try {
+      const url = `https://graph.microsoft.com/v1.0/sites?search=${encodeURIComponent(siteName)}&$top=5`;
+      console.log(`[SHAREPOINT] Try 3 (search): ${url}`);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        const sites = data.value || [];
+        // Try to match by URL
+        const match = sites.find(s => s.webUrl && s.webUrl.toLowerCase().includes(siteName.toLowerCase()));
+        if (match) {
+          return { id: match.id, name: match.displayName, webUrl: match.webUrl, method: 'search' };
+        }
+        if (sites.length > 0) {
+          return { id: sites[0].id, name: sites[0].displayName, webUrl: sites[0].webUrl, method: 'search-first-result' };
+        }
+      }
+      const err = await res.text();
+      errors.push(`Approach 3 (${res.status}): ${err.slice(0, 150)}`);
+    } catch (e) { errors.push(`Approach 3: ${e.message}`); }
+  }
+
+  console.error(`[SHAREPOINT] All lookup approaches failed:`, errors);
+  throw new Error(`Site lookup failed. Tried 3 approaches:\n${errors.join('\n')}`);
+}
+
+// ─── Debug: test Graph API access directly ───────────────────────────────────
+async function debugGraphAccess() {
+  const token = await getGraphToken();
+  const results = {};
+
+  // Test 1: Can we access the Graph API at all?
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/organization', {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Site lookup failed: ${err.slice(0, 200)}`);
+    results.organization = res.ok ? 'OK' : `Error ${res.status}: ${(await res.text()).slice(0, 100)}`;
+  } catch (e) { results.organization = e.message; }
+
+  // Test 2: Can we list sites?
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/sites?$top=3', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      results.listSites = { status: 'OK', count: (data.value || []).length, sites: (data.value || []).map(s => ({ id: s.id, name: s.displayName, webUrl: s.webUrl })) };
+    } else {
+      results.listSites = `Error ${res.status}: ${(await res.text()).slice(0, 150)}`;
     }
-    const site = await res.json();
-    return { id: site.id, name: site.displayName, webUrl: site.webUrl };
-  }
+  } catch (e) { results.listSites = e.message; }
 
-  // Subsite: /sites/SiteName
-  const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${hostname}:${sitePath}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // Test 3: Search for the site
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/sites?search=Lisinski&$top=5', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      results.searchSites = { status: 'OK', count: (data.value || []).length, sites: (data.value || []).map(s => ({ id: s.id, name: s.displayName, webUrl: s.webUrl })) };
+    } else {
+      results.searchSites = `Error ${res.status}: ${(await res.text()).slice(0, 150)}`;
+    }
+  } catch (e) { results.searchSites = e.message; }
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Site lookup failed: ${err.slice(0, 200)}`);
-  }
+  // Test 4: Direct hostname lookup
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/sites/lisinskifirmcom.sharepoint.com', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const site = await res.json();
+      results.rootSite = { status: 'OK', id: site.id, name: site.displayName };
+    } else {
+      results.rootSite = `Error ${res.status}: ${(await res.text()).slice(0, 150)}`;
+    }
+  } catch (e) { results.rootSite = e.message; }
 
-  const site = await res.json();
-  return { id: site.id, name: site.displayName, webUrl: site.webUrl };
+  // Test 5: Subsite lookup
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/sites/lisinskifirmcom.sharepoint.com:/sites/Lisinski-IT', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const site = await res.json();
+      results.subSite = { status: 'OK', id: site.id, name: site.displayName };
+    } else {
+      results.subSite = `Error ${res.status}: ${(await res.text()).slice(0, 150)}`;
+    }
+  } catch (e) { results.subSite = e.message; }
+
+  results.tokenPreview = token ? `${token.slice(0, 20)}...` : 'NONE';
+  return results;
 }
 
 module.exports = {
@@ -229,4 +334,5 @@ module.exports = {
   listSites,
   listDrives,
   lookupSiteByUrl,
+  debugGraphAccess,
 };

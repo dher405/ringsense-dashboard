@@ -821,7 +821,7 @@ app.post('/api/sftp/upload-now', adminAuth, async (req, res) => {
 });
 
 // ─── SharePoint Routes (protected) ──────────────────────────────────────────
-const { uploadToSharePoint, testSharePointConnection, listSites, listDrives, lookupSiteByUrl } = require('./sharepoint');
+const { uploadToSharePoint, testSharePointConnection, listSites, listDrives, lookupSiteByUrl, debugGraphAccess } = require('./sharepoint');
 
 app.post('/api/sharepoint/test', adminAuth, async (req, res) => {
   try {
@@ -875,6 +875,15 @@ app.post('/api/sharepoint/lookup', adminAuth, async (req, res) => {
     res.json(site);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/debug/sharepoint', adminAuth, async (req, res) => {
+  try {
+    const results = await debugGraphAccess();
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
