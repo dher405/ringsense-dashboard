@@ -959,7 +959,7 @@ function SettingsPage() {
                 <div className="radio-group">
                   <label className={`radio-option ${form.sp_export_format === 'zip_txt' ? 'selected' : ''}`}>
                     <input type="radio" name="sp_export_format" value="zip_txt" checked={form.sp_export_format !== 'json'} onChange={() => updateField('sp_export_format', 'zip_txt')} />
-                    <span>Individual TXT files in ZIP</span>
+                    <span>Agent folders (recommended)</span>
                   </label>
                   <label className={`radio-option ${form.sp_export_format === 'json' ? 'selected' : ''}`}>
                     <input type="radio" name="sp_export_format" value="json" checked={form.sp_export_format === 'json'} onChange={() => updateField('sp_export_format', 'json')} />
@@ -968,7 +968,7 @@ function SettingsPage() {
                 </div>
                 <span className="form-hint">
                   {form.sp_export_format !== 'json'
-                    ? 'Each call gets its own .txt file named by date, time, and phone numbers — all bundled in a timestamped ZIP.'
+                    ? 'Each call is saved as a .txt file inside SharePoint folders organised by agent name, then by upload date/time.'
                     : 'All call records exported as a single JSON file (legacy format).'}
                 </span>
               </div>
@@ -1014,7 +1014,7 @@ function SettingsPage() {
                   try {
                     const res = await API.uploadSharePointNow(parseInt(form.schedule_lookback_days || '7'));
                     const detail = res.format === 'zip_txt'
-                      ? `Uploaded ${res.recordCount} calls as "${res.fileName}" (ZIP of individual TXT files)`
+                      ? `Uploaded ${res.recordCount} calls across ${res.agentCount} agent folder(s) [${res.uploadTimestamp}]`
                       : `Uploaded ${res.recordCount} records to "${res.fileName}"`;
                     showStatus('success', res.message || detail);
                   } catch (err) { showStatus('error', err.message); }

@@ -155,180 +155,76 @@ function formatCallAsTxt(call) {
   return lines.join('\n');
 }
 
-// ─── Build a ZIP buffer from call records using raw ZIP format (no deps) ──────
-// Uses STORE (no compression) so we don't need zlib — files are plain text
-// and already small. This produces a valid .zip readable by any unzip tool.
-function buildZipBuffer(calls) {
-  // ZIP spec constants
-  const LOCAL_FILE_HEADER_SIG  = 0x04034b50;
-  const CENTRAL_DIR_HEADER_SIG = 0x02014b50;
-  const END_CENTRAL_DIR_SIG    = 0x06054b50;
-
-  const entries = calls.map(call => {
-    const filename = buildCallFilename(call);
-    const content  = Buffer.from(formatCallAsTxt(call), 'utf8');
-    const crc      = crc32(content);
-    return { filename, content, crc };
-  });
-
-  const localHeaders = [];
-  const centralDirs  = [];
-  let offset = 0;
-
-  for (const entry of entries) {
-    const nameBytes = Buffer.from(entry.filename, 'utf8');
-    const localHeader = Buffer.alloc(30 + nameBytes.length);
-    localHeader.writeUInt32LE(LOCAL_FILE_HEADER_SIG, 0);
-    localHeader.writeUInt16LE(20, 4);   // version needed
-    localHeader.writeUInt16LE(0, 6);    // flags
-    localHeader.writeUInt16LE(0, 8);    // compression: STORE
-    localHeader.writeUInt16LE(0, 10);   // mod time
-    localHeader.writeUInt16LE(0, 12);   // mod date
-    localHeader.writeUInt32LE(entry.crc, 14);
-    localHeader.writeUInt32LE(entry.content.length, 18);
-    localHeader.writeUInt32LE(entry.content.length, 22);
-    localHeader.writeUInt16LE(nameBytes.length, 26);
-    localHeader.writeUInt16LE(0, 28);   // extra field length
-    nameBytes.copy(localHeader, 30);
-
-    const centralDir = Buffer.alloc(46 + nameBytes.length);
-    centralDir.writeUInt32LE(CENTRAL_DIR_HEADER_SIG, 0);
-    centralDir.writeUInt16LE(20, 4);    // version made by
-    centralDir.writeUInt16LE(20, 6);    // version needed
-    centralDir.writeUInt16LE(0, 8);     // flags
-    centralDir.writeUInt16LE(0, 10);    // compression
-    centralDir.writeUInt16LE(0, 12);    // mod time
-    centralDir.writeUInt16LE(0, 14);    // mod date
-    centralDir.writeUInt32LE(entry.crc, 16);
-    centralDir.writeUInt32LE(entry.content.length, 20);
-    centralDir.writeUInt32LE(entry.content.length, 24);
-    centralDir.writeUInt16LE(nameBytes.length, 28);
-    centralDir.writeUInt16LE(0, 30);    // extra field length
-    centralDir.writeUInt16LE(0, 32);    // comment length
-    centralDir.writeUInt16LE(0, 34);    // disk start
-    centralDir.writeUInt16LE(0, 36);    // internal attrs
-    centralDir.writeUInt32LE(0, 38);    // external attrs
-    centralDir.writeUInt32LE(offset, 42); // relative offset
-    nameBytes.copy(centralDir, 46);
-
-    localHeaders.push(localHeader, entry.content);
-    centralDirs.push(centralDir);
-    offset += localHeader.length + entry.content.length;
+// ─── Resolve the agent name from a call record ───────────────────────────
+function resolveAgentName(call) {
+  const info = call.callInfo || call;
+  // Prefer the pre-resolved extension field added in fetchAllInsights
+  if (info.extension) return info.extension;
+  // Fall back: inbound = to.name, outbound = from.name
+  if (info.direction === 'Outbound') {
+    return (info.from && info.from.name) ? info.from.name : resolveParty(info.from);
   }
-
-  const centralDirBuffer = Buffer.concat(centralDirs);
-  const endRecord = Buffer.alloc(22);
-  endRecord.writeUInt32LE(END_CENTRAL_DIR_SIG, 0);
-  endRecord.writeUInt16LE(0, 4);   // disk number
-  endRecord.writeUInt16LE(0, 6);   // start disk
-  endRecord.writeUInt16LE(entries.length, 8);
-  endRecord.writeUInt16LE(entries.length, 10);
-  endRecord.writeUInt32LE(centralDirBuffer.length, 12);
-  endRecord.writeUInt32LE(offset, 16);
-  endRecord.writeUInt16LE(0, 20);  // comment length
-
-  return Buffer.concat([...localHeaders, centralDirBuffer, endRecord]);
+  return (info.to && info.to.name) ? info.to.name : resolveParty(info.to);
 }
 
-// ─── CRC-32 implementation (needed for ZIP) ───────────────────────────────────
-function crc32(buf) {
-  const table = crc32.table || (crc32.table = (() => {
-    const t = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      t[n] = c;
-    }
-    return t;
-  })());
-  let crc = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
-  return (crc ^ 0xFFFFFFFF) >>> 0;
-}
-
-// ─── Get Graph API access token using client credentials ─────────────────────
-async function getGraphToken() {
-  const config = getConfig();
-  const tenantId = config.sp_tenant_id || config.sso_tenant_id;
-  const clientId = config.sp_client_id || config.sso_client_id;
-  const clientSecret = config.sp_client_secret || config.sso_client_secret;
-
-  if (!tenantId || !clientId || !clientSecret) {
-    throw new Error('SharePoint not configured. Set tenant ID, client ID, and client secret in Settings → SharePoint.');
-  }
-
-  // Check cached token
-  const cachedToken = config.sp_graph_token;
-  const cachedExpiry = parseInt(config.sp_graph_token_expiry || '0', 10);
-  if (cachedToken && cachedExpiry > Date.now() + 60000) {
-    return cachedToken;
-  }
-
-  const res = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: 'https://graph.microsoft.com/.default',
-      grant_type: 'client_credentials',
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Graph auth failed: ${err.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  setConfig({
-    sp_graph_token: data.access_token,
-    sp_graph_token_expiry: String(Date.now() + data.expires_in * 1000),
-  });
-
-  return data.access_token;
-}
-
-// ─── Upload file to SharePoint (raw buffer + explicit content-type) ──────────
-async function _uploadBuffer(token, siteId, driveId, folderPath, filename, buffer, contentType) {
-  const cleanPath = (folderPath || '/RingSense Exports').replace(/^\/+|\/+$/g, '');
-  let uploadUrl;
-  if (driveId) {
-    uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${cleanPath}/${filename}:/content`;
-  } else {
-    uploadUrl = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${cleanPath}/${filename}:/content`;
-  }
-  console.log(`[SHAREPOINT] Uploading ${filename} to: ${uploadUrl} (${Math.round(buffer.length / 1024)}KB)`);
-  const res = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': contentType },
-    body: buffer,
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`SharePoint upload failed (${res.status}): ${errBody.slice(0, 300)}`);
-  }
-  return await res.json();
-}
-
-// ─── Upload call data as a ZIP of individual TXT files ───────────────────────
-async function uploadToSharePointAsZip(calls) {
+// ─── Upload calls to SharePoint organised by agent folder ──────────────────
+// Folder structure:
+//   <sp_folder_path>/<Agent Name>/<YYYY-MM-DD HH-MM-SS Upload>/
+//       YYYYMMDD_HHMM_from_X_to_Y.txt
+//       YYYYMMDD_HHMM_from_X_to_Y.txt
+//       ...
+async function uploadToSharePointByAgent(calls) {
   const config = getConfig();
   const { sp_site_id, sp_drive_id, sp_folder_path } = config;
   if (!sp_site_id) throw new Error('SharePoint Site ID not configured. Go to Settings → SharePoint.');
+
+  const token = await getGraphToken();
+
+  // Build upload timestamp once for all files in this batch
   const now = new Date();
-  const ts  = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const zipName = `ringsense_export_${ts}.zip`;
-  const token  = await getGraphToken();
-  const buffer = buildZipBuffer(calls);
-  const result = await _uploadBuffer(token, sp_site_id, sp_drive_id, sp_folder_path, zipName, buffer, 'application/zip');
+  const uploadTs = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const baseFolder = (sp_folder_path || '/RingSense Exports').replace(/\/+$/, '');
+
+  // Group calls by agent name
+  const byAgent = {};
+  for (const call of calls) {
+    const agent = resolveAgentName(call) || 'Unknown Agent';
+    if (!byAgent[agent]) byAgent[agent] = [];
+    byAgent[agent].push(call);
+  }
+
+  const uploaded = [];
+  const errors   = [];
+
+  for (const [agent, agentCalls] of Object.entries(byAgent)) {
+    const safeAgent = sanitizeForFilename(agent).replace(/_+/g, ' ').trim() || 'Unknown_Agent';
+    // Path: BaseFolder / Agent Name / 2026-04-22 14-35-00 Upload
+    const folderPath = `${baseFolder}/${safeAgent}/${uploadTs} Upload`;
+
+    for (const call of agentCalls) {
+      const filename = buildCallFilename(call);
+      const txtContent = formatCallAsTxt(call);
+      const buffer = Buffer.from(txtContent, 'utf8');
+      try {
+        const result = await _uploadBuffer(token, sp_site_id, sp_drive_id, folderPath, filename, buffer, 'text/plain');
+        uploaded.push({ agent, filename, webUrl: result.webUrl });
+        console.log(`[SHAREPOINT] Uploaded: ${folderPath}/${filename}`);
+      } catch (err) {
+        errors.push({ agent, filename, error: err.message });
+        console.error(`[SHAREPOINT] Failed: ${folderPath}/${filename} — ${err.message}`);
+      }
+    }
+  }
+
   return {
-    success: true,
-    fileName: result.name,
-    webUrl: result.webUrl,
-    size: result.size,
-    recordCount: calls.length,
-    format: 'zip_txt',
+    success: errors.length === 0,
+    recordCount: uploaded.length,
+    errorCount: errors.length,
+    agentCount: Object.keys(byAgent).length,
+    uploadTimestamp: uploadTs,
+    uploaded,
+    errors,
+    format: 'agent_folders',
   };
 }
 
@@ -580,7 +476,7 @@ async function debugGraphAccess() {
 
 module.exports = {
   uploadToSharePoint,
-  uploadToSharePointAsZip,
+  uploadToSharePointByAgent,
   testSharePointConnection,
   listSites,
   listDrives,

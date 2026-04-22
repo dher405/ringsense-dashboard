@@ -71,6 +71,9 @@ async function fetchAllInsights(daysBack = 7) {
           from: call.from,
           to: call.to,
           result: call.result,
+          extension: (call.direction === 'Outbound')
+            ? (call.from && call.from.name ? call.from.name : null)
+            : (call.to   && call.to.name   ? call.to.name   : null),
         },
         insights,
         exportedAt: new Date().toISOString(),
@@ -221,13 +224,13 @@ async function runScheduledUpload() {
     // Upload to SharePoint if configured
     if (config.sp_site_id && config.schedule_sharepoint_enabled !== 'false') {
       try {
-        const { uploadToSharePoint, uploadToSharePointAsZip } = require('./sharepoint');
+        const { uploadToSharePoint, uploadToSharePointByAgent } = require('./sharepoint');
         let spResult;
-        if (config.sp_export_format === 'zip_txt') {
-          spResult = await uploadToSharePointAsZip(data);
-          const msg = `SharePoint: Uploaded ${spResult.recordCount} calls as "${spResult.fileName}" (ZIP of TXT files, ${Math.round(spResult.size / 1024)}KB) — ${spResult.webUrl}`;
+        if (config.sp_export_format !== 'json') {
+          spResult = await uploadToSharePointByAgent(data);
+          const msg = `SharePoint: Uploaded ${spResult.recordCount} calls across ${spResult.agentCount} agent folder(s) [${spResult.uploadTimestamp}]${spResult.errorCount ? ` (${spResult.errorCount} errors)` : ''}`;
           console.log(`[CRON] ${msg}`);
-          addHistory({ type: 'success', message: msg });
+          addHistory({ type: spResult.errorCount ? 'error' : 'success', message: msg });
         } else {
           spResult = await uploadToSharePoint(data, filename);
           const msg = `SharePoint: Uploaded ${spResult.recordCount} records to "${spResult.fileName}" (${spResult.webUrl})`;

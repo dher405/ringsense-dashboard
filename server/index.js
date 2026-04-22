@@ -821,7 +821,7 @@ app.post('/api/sftp/upload-now', adminAuth, async (req, res) => {
 });
 
 // ─── SharePoint Routes (protected) ──────────────────────────────────────────
-const { uploadToSharePoint, uploadToSharePointAsZip, testSharePointConnection, listSites, listDrives, lookupSiteByUrl, debugGraphAccess } = require('./sharepoint');
+const { uploadToSharePoint, uploadToSharePointByAgent, testSharePointConnection, listSites, listDrives, lookupSiteByUrl, debugGraphAccess } = require('./sharepoint');
 
 app.post('/api/sharepoint/test', adminAuth, async (req, res) => {
   try {
@@ -841,8 +841,8 @@ app.post('/api/sharepoint/upload-now', adminAuth, async (req, res) => {
       return res.json({ success: true, message: 'No recorded calls found for the period.' });
     }
     let result;
-    if (config.sp_export_format === 'zip_txt') {
-      result = await uploadToSharePointAsZip(data);
+    if (config.sp_export_format !== 'json') {
+      result = await uploadToSharePointByAgent(data);
     } else {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `ringsense-export-${timestamp}.json`;
