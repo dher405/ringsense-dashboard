@@ -3,12 +3,23 @@ const { getConfig, setConfig } = require('./store');
 // ─── Helper: pad a number with leading zeros ──────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0'); }
 
-// ─── Helper: sanitize a string for use in a filename ─────────────────────────
+// ─── Helper: sanitize a string for use in a filename ─────────────────
 function sanitizeForFilename(s) {
-  return (s || 'unknown').replace(/[^a-zA-Z0-9+\-]/g, '_').replace(/_+/g, '_').slice(0, 40);
+  const str = (s !== null && s !== undefined && typeof s !== 'object') ? String(s) : 'unknown';
+  return (str || 'unknown').replace(/[^a-zA-Z0-9+-]/g, '_').replace(/_+/g, '_').slice(0, 40);
 }
 
-// ─── Build a human-readable filename for one call ────────────────────────────
+// ─── Resolve a from/to field to a plain string ──────────────────────
+function resolveParty(obj) {
+  if (!obj) return 'unknown';
+  if (typeof obj === 'string') return obj;
+  if (typeof obj === 'object') {
+    return obj.phoneNumber || obj.extensionNumber || obj.name || obj.id || 'unknown';
+  }
+  return String(obj);
+}
+
+// ─── Build a human-readable filename for one call ────────────────────
 function buildCallFilename(call) {
   const info = call.callInfo || call;
   const raw = info.startTime || info.date || info.time || null;
@@ -20,10 +31,8 @@ function buildCallFilename(call) {
       timePart = `${pad(d.getHours())}${pad(d.getMinutes())}`;
     }
   }
-  const fromObj = info.from || {};
-  const toObj   = info.to   || {};
-  const from = sanitizeForFilename(fromObj.phoneNumber || fromObj.name || fromObj || info.callerNumber || info.callingNumber);
-  const to   = sanitizeForFilename(toObj.phoneNumber   || toObj.name   || toObj   || info.calleeNumber || info.calledNumber);
+  const from = sanitizeForFilename(resolveParty(info.from) || info.callerNumber || info.callingNumber);
+  const to   = sanitizeForFilename(resolveParty(info.to)   || info.calleeNumber || info.calledNumber);
   return `${datePart}_${timePart}_from_${from}_to_${to}.txt`;
 }
 
