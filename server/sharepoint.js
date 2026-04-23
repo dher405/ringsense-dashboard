@@ -33,7 +33,7 @@ function buildCallFilename(call) {
   }
   const from = sanitizeForFilename(resolveParty(info.from) || info.callerNumber || info.callingNumber);
   const to   = sanitizeForFilename(resolveParty(info.to)   || info.calleeNumber || info.calledNumber);
-  return `${datePart}_${timePart}_from_${from}_to_${to}.txt`;
+  return `${datePart}_${timePart}_from_${from}_to_${to}.pdf`;
 }
 
 // ─── Format one call record as a readable plain-text block ───────────────────
@@ -155,6 +155,179 @@ function formatCallAsTxt(call) {
   return lines.join('\n');
 }
 
+// ─── PDF generation helpers ──────────────────────────────────────────────────
+const ROLE_COLORS = {
+  host:     { bg: '#FFF3EE', text: '#C2410C' },
+  customer: { bg: '#EFF6FF', text: '#1D4ED8' },
+  guest:    { bg: '#F0FDF4', text: '#166534' },
+  agent:    { bg: '#F3F4F6', text: '#374151' },
+};
+
+function getSpeakerRole(speaker) {
+  if (!speaker) return 'agent';
+  const s = speaker.toLowerCase();
+  if (s.includes('host') || s.includes('agent')) return 'host';
+  if (s.includes('customer') || s.includes('caller')) return 'customer';
+  if (s.includes('guest')) return 'guest';
+  return 'agent';
+}
+
+function fmtTs(seconds) {
+  if (seconds === undefined || seconds === null) return '';
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const base = `${pad(m)}:${pad(sec)}`;
+  return h > 0 ? `${pad(h)}:${base}` : base;
+}
+
+async function formatCallAsPdf(call) {
+  const PDFDocument = require('pdfkit');
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const info     = call.callInfo || call;
+    const insights = call.insights || call.ringSenseInsights || {};
+    const W        = doc.page.width - 100;
+
+    // Header bar
+    doc.rect(0, 0, doc.page.width, 72).fill('#FFFFFF');
+    doc.rect(0, 70, doc.page.width, 2).fill('#E5E7EB');
+    doc.fontSize(10).fillColor('#FF6B35').font('Helvetica-Bold').text('RingCentral', 50, 20);
+    doc.rect(50, 32, 60, 2).fill('#FF6B35');
+    doc.fontSize(7).fillColor('#6B7280').font('Helvetica').text('CONVERSATION INTELLIGENCE', 50, 37);
+
+    // Title
+    const fromObj   = info.from || {};
+    const toObj     = info.to   || {};
+    const direction = (info.direction || '').toLowerCase();
+    const fromName  = fromObj.phoneNumber || fromObj.name || 'Unknown';
+    const toName    = toObj.phoneNumber   || toObj.name   || 'Unknown';
+    const otherParty = direction === 'outbound' ? toName : fromName;
+    const title = `${direction === 'outbound' ? 'Outbound' : 'Inbound'} call with ${otherParty}`;
+
+    doc.fontSize(22).fillColor('#111827').font('Helvetica-Bold').text(title, 50, 90, { width: W });
+
+    // Date/time
+    if (info.startTime) {
+      const d = new Date(info.startTime);
+      if (!isNaN(d)) {
+        const dateStr = d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
+                      + ', ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+        doc.fontSize(12).fillColor('#6B7280').font('Helvetica').text(dateStr, 50, doc.y + 4);
+      }
+    }
+
+    // Metadata
+    doc.moveDown(0.8);
+    const meta = [];
+    if (info.duration) { const d = parseInt(info.duration,10); meta.push(`Duration: ${Math.floor(d/60)}m ${d%60}s`); }
+    if (info.result)    meta.push(`Result: ${info.result}`);
+    if (info.direction) meta.push(`Direction: ${info.direction}`);
+    if (meta.length) {
+      doc.fontSize(10).fillColor('#6B7280').font('Helvetica').text(meta.join('  ·  '), 50, doc.y, { width: W });
+    }
+    doc.moveDown(0.5);
+    doc.rect(50, doc.y, W, 1).fill('#E5E7EB');
+    doc.moveDown(0.8);
+
+    // Summary
+    if (insights.summary || insights.brief) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Summary');
+      doc.moveDown(0.3);
+      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(insights.summary || insights.brief, { width: W });
+      doc.moveDown(0.8);
+    }
+
+    // AI Score
+    const score = insights.aiScore !== undefined ? insights.aiScore : insights.score;
+    if (score !== undefined) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('AI Score');
+      doc.moveDown(0.2);
+      doc.fontSize(22).fillColor('#FF6B35').font('Helvetica-Bold').text(String(score));
+      doc.moveDown(0.8);
+    }
+
+    // Highlights
+    const highlights = insights.highlights || insights.keyMoments || [];
+    if (highlights.length) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Highlights');
+      doc.moveDown(0.3);
+      highlights.forEach((h, i) => {
+        const t = typeof h === 'string' ? h : (h.text || h.content || JSON.stringify(h));
+        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
+      });
+      doc.moveDown(0.8);
+    }
+
+    // Next Steps
+    const nextSteps = insights.nextSteps || insights.actionItems || [];
+    if (nextSteps.length) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Next Steps');
+      doc.moveDown(0.3);
+      nextSteps.forEach((s, i) => {
+        const t = typeof s === 'string' ? s : (s.text || s.content || JSON.stringify(s));
+        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
+      });
+      doc.moveDown(0.8);
+    }
+
+    // Call Notes
+    if (insights.notes || insights.callNotes) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Call Notes');
+      doc.moveDown(0.3);
+      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(insights.notes || insights.callNotes, { width: W });
+      doc.moveDown(0.8);
+    }
+
+    // Transcript
+    const transcriptRaw = insights.transcript || insights.transcription || null;
+    const entries = transcriptRaw
+      ? (Array.isArray(transcriptRaw) ? transcriptRaw : (transcriptRaw.entries || transcriptRaw.utterances || []))
+      : [];
+
+    if (entries.length) {
+      doc.rect(50, doc.y, W, 1).fill('#E5E7EB');
+      doc.moveDown(0.8);
+      entries.forEach(entry => {
+        const speaker = entry.speaker || entry.name || entry.speakerId || 'Speaker';
+        const text    = entry.text || entry.content || entry.message || '';
+        const ts      = fmtTs(entry.startTime);
+        const role    = getSpeakerRole(speaker);
+        const col     = ROLE_COLORS[role] || ROLE_COLORS.agent;
+        const label   = role.charAt(0).toUpperCase() + role.slice(1);
+        if (doc.y > doc.page.height - 120) doc.addPage();
+        const rowY = doc.y;
+        // Role badge
+        doc.roundedRect(50, rowY, 46, 14, 7).fill(col.bg);
+        doc.fontSize(7).fillColor(col.text).font('Helvetica-Bold')
+           .text(label.toUpperCase(), 50, rowY + 3, { width: 46, align: 'center', lineBreak: false });
+        // Speaker name
+        doc.fontSize(11).fillColor('#111827').font('Helvetica-Bold')
+           .text(speaker, 102, rowY + 1, { width: W - 52 - 55, lineBreak: false });
+        // Timestamp
+        if (ts) {
+          doc.fontSize(10).fillColor('#6B7280').font('Helvetica')
+             .text(ts, 50, rowY + 1, { width: W, align: 'right', lineBreak: false });
+        }
+        // Text
+        doc.fontSize(11).fillColor('#374151').font('Helvetica')
+           .text(text, 50, rowY + 18, { width: W });
+        doc.moveDown(0.5);
+      });
+    } else if (typeof transcriptRaw === 'string' && transcriptRaw) {
+      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(transcriptRaw, { width: W });
+    }
+
+    doc.end();
+  });
+}
+
 // ─── Resolve the agent name from a call record ───────────────────────────
 function resolveAgentName(call) {
   const info = call.callInfo || call;
@@ -203,10 +376,9 @@ async function uploadToSharePointByAgent(calls) {
 
     for (const call of agentCalls) {
       const filename = buildCallFilename(call);
-      const txtContent = formatCallAsTxt(call);
-      const buffer = Buffer.from(txtContent, 'utf8');
+      const buffer = await formatCallAsPdf(call);
       try {
-        const result = await _uploadBuffer(token, sp_site_id, sp_drive_id, folderPath, filename, buffer, 'text/plain');
+        const result = await _uploadBuffer(token, sp_site_id, sp_drive_id, folderPath, filename, buffer, 'application/pdf');
         uploaded.push({ agent, filename, webUrl: result.webUrl });
         console.log(`[SHAREPOINT] Uploaded: ${folderPath}/${filename}`);
       } catch (err) {
