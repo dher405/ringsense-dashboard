@@ -450,7 +450,10 @@ app.get('/api/calls', adminAuth, async (req, res) => {
   try {
     const { dateFrom, dateTo, perPage } = req.query;
     const dfrom = dateFrom || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const dto = dateTo || undefined;
+    // If dateTo is just a date (YYYY-MM-DD), extend it to end of that day
+    const dto = dateTo
+      ? (dateTo.length === 10 ? dateTo + 'T23:59:59Z' : dateTo)
+      : undefined;
 
     // 1. Fetch PBX calls — try account-level first, fall back to extension-level
     let pbxRecords = [];

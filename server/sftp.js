@@ -83,9 +83,21 @@ async function fetchAllInsights(daysBack = 7) {
           from: call.from,
           to: call.to,
           result: call.result,
-          extension: (call.direction === 'Outbound')
-            ? (call.from && call.from.name ? call.from.name : null)
-            : (call.to   && call.to.name   ? call.to.name   : null),
+          // Resolve agent: match ownerExtensionId against speakerInfo for authoritative name
+          extension: (() => {
+            const ownerExtId = insights.ownerExtensionId ? String(insights.ownerExtensionId) : null;
+            const speakers   = insights.speakerInfo || [];
+            // Find speaker whose extensionId matches ownerExtensionId
+            if (ownerExtId && speakers.length) {
+              const owner = speakers.find(s => s.extensionId && String(s.extensionId) === ownerExtId);
+              if (owner && owner.name) return owner.name;
+            }
+            // Fall back to call log from/to name based on direction
+            if (call.direction === 'Outbound') {
+              return (call.from && call.from.name) ? call.from.name : null;
+            }
+            return (call.to && call.to.name) ? call.to.name : null;
+          })(),
         },
         insights,
         exportedAt: new Date().toISOString(),

@@ -1575,7 +1575,11 @@ function CallList() {
   const loadCalls = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const data = await API.getCalls({ dateFrom: new Date(dateFrom).toISOString(), dateTo: new Date(dateTo + 'T23:59:59').toISOString() });
+      // Use local-time boundaries to avoid UTC-offset date bleed
+      // "2026-04-22" → start of that day in local time, not UTC midnight
+      const fromISO = new Date(dateFrom + 'T00:00:00').toISOString();
+      const toISO   = new Date(dateTo   + 'T23:59:59').toISOString();
+      const data = await API.getCalls({ dateFrom: fromISO, dateTo: toISO });
       setCalls(data.records || []);
       setCounts({ pbx: data.pbxCount || 0, rcx: data.rcxCount || 0 });
     } catch (err) {
