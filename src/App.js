@@ -326,6 +326,7 @@ function SettingsPage() {
     rc_server_url: '',
     rc_client_id: '',
     rc_client_secret: '',
+    anthropic_api_key: '',
     rc_jwt: '',
     sftp_host: '',
     sftp_port: '22',
@@ -376,6 +377,7 @@ function SettingsPage() {
         rc_server_url: data.rc_server_url || 'https://platform.ringcentral.com',
         rc_client_id: data.rc_client_id || '',
         rc_client_secret: data.rc_client_secret || '',
+        anthropic_api_key: '',
         rc_jwt: data.rc_jwt || '',
         sftp_host: data.sftp_host || '',
         sftp_port: data.sftp_port || '22',
@@ -455,6 +457,8 @@ function SettingsPage() {
       ['rc_server_url', 'rc_client_id'].forEach(k => { updates[k] = form[k]; });
       // Only send secrets if they've been changed (not masked)
       if (form.rc_client_secret && !form.rc_client_secret.startsWith('••••')) updates.rc_client_secret = form.rc_client_secret;
+      if (form.anthropic_api_key && !form.anthropic_api_key.startsWith('sk-ant-api')) {} // handled below
+      if (form.anthropic_api_key) updates.anthropic_api_key = form.anthropic_api_key;
       if (form.rc_jwt && !form.rc_jwt.startsWith('••••')) updates.rc_jwt = form.rc_jwt;
       await API.updateConfig(updates);
       showStatus('success', 'API credentials saved and encrypted.');
@@ -656,6 +660,13 @@ function SettingsPage() {
                 <span className="form-hint">Generate at <a href="https://developers.ringcentral.com/my-account.html#/credentials" target="_blank" rel="noopener noreferrer">RingCentral Developer Portal</a></span>
               </div>
 
+              <div className="form-group">
+                <label>Anthropic API Key <span style={{fontSize:11, color:'var(--color-text-secondary)', fontWeight:'normal'}}>(optional — enables auto-translation of Spanish calls to English)</span></label>
+                {config.anthropic_api_key_set && <span className="field-encrypted">Encrypted</span>}
+                <input type="password" value={form.anthropic_api_key || ''} onChange={e => updateField('anthropic_api_key', e.target.value)} placeholder={config.anthropic_api_key_set ? 'Leave blank to keep current' : 'sk-ant-...'} />
+                <span className="form-hint">Get your key at <a href="https://console.anthropic.com/account/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>. Used only for translating non-English call content to English before export.</span>
+              </div>
+
               <div className="form-actions-row">
                 <button className="btn btn-primary" onClick={handleSaveApi} disabled={saving}>
                   {saving ? <span className="spinner" /> : Icons.check}
@@ -665,6 +676,13 @@ function SettingsPage() {
                   {Icons.play} Test Connection
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* ─── Translation (Anthropic) Section ───────────────────────────── */}
+          {activeSection === 'api' && config.anthropic_api_key_set && (
+            <div style={{marginTop: 8, padding: '10px 14px', background: 'var(--color-background-success)', borderRadius: 'var(--border-radius-md)', fontSize: 13, color: 'var(--color-text-success)'}}>
+              ✓ Auto-translation enabled — non-English call content will be translated to English before export
             </div>
           )}
 

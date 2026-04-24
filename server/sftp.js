@@ -3,6 +3,7 @@ const cron = require('node-cron');
 const path = require('path');
 const { getConfig, setConfig } = require('./store');
 const { rcApiFetch } = require('./rcAuth');
+const { translateInsights } = require('./translate');
 
 let activeJob = null;
 let jobHistory = [];
@@ -82,6 +83,9 @@ async function fetchAllInsights(daysBack = 7) {
       const nestedKeys  = Object.keys((insights || {}).insights || {});
       console.log(`[INSIGHTS] rec=${call.recording.id.slice(-8)} top=[${insightKeys.join(',')}] nested=[${nestedKeys.join(',')}]`);
 
+      // Translate any non-English content to English before export
+      const translatedInsights = await translateInsights(insights);
+
       results.push({
         recordingId: call.recording.id,
         callInfo: {
@@ -109,7 +113,7 @@ async function fetchAllInsights(daysBack = 7) {
             return (call.to && call.to.name) ? call.to.name : null;
           })(),
         },
-        insights,
+        insights: translatedInsights,
         exportedAt: new Date().toISOString(),
       });
     } catch (err) {
