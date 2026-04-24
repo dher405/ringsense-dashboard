@@ -67,6 +67,11 @@ async function fetchAllInsights(daysBack = 7) {
       const insights = await rcApiFetch(
         `/ai/ringsense/v1/public/accounts/~/domains/pbx/records/${call.recording.id}/insights`
       );
+      // Debug: log top-level insight keys so we can verify field names in Render logs
+      const insightKeys = Object.keys(insights || {});
+      const nestedKeys  = Object.keys((insights || {}).insights || {});
+      console.log(`[INSIGHTS] rec=${call.recording.id.slice(-8)} top=[${insightKeys.join(',')}] nested=[${nestedKeys.join(',')}]`);
+
       results.push({
         recordingId: call.recording.id,
         callInfo: {

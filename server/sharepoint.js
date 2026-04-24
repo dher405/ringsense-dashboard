@@ -208,9 +208,17 @@ async function formatCallAsPdf(call) {
     // Real API field paths
     const transcript  = insightsData.Transcript  || insightsData.transcript  || [];
     const summaryRaw  = insightsData.Summary      || insightsData.BulletedSummary || insightsData.summary || insightsData.brief || null;
-    const highlights  = insightsData.Highlights   || insightsData.highlights  || [];
-    const nextSteps   = insightsData.NextSteps     || insightsData.nextSteps   || insightsData.actionItems || [];
-    const callNotes   = insightsData.CallNotes     || insightsData.callNotes   || insightsData.notes || null;
+    // Exhaustive field name variants — RingSense API may use any of these
+    const highlights = insightsData.Highlights   || insightsData.highlights   ||
+                       insightsData.KeyMoments   || insightsData.keyMoments   ||
+                       insightsData.Moments      || insightsData.moments      || [];
+    const nextSteps  = insightsData.NextSteps    || insightsData.nextSteps    ||
+                       insightsData.ActionItems  || insightsData.actionItems  ||
+                       insightsData.Actions      || insightsData.actions      ||
+                       insightsData.next_steps   || insightsData.action_items || [];
+    const callNotes  = insightsData.CallNotes    || insightsData.callNotes    ||
+                       insightsData.Notes        || insightsData.notes        ||
+                       insightsData.call_notes   || null;
     const aiScoreObj  = insightsData.AIScore       || insightsData.aiScore     || null;
     const aiScore     = aiScoreObj
       ? (typeof aiScoreObj === 'object' ? (aiScoreObj.value ?? aiScoreObj.score ?? null) : aiScoreObj)
