@@ -51,15 +51,25 @@ async function fetchAllInsights(daysBack = 7) {
     dateFrom,
   });
 
-  const callLogs = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
+  // Use account-level call log to get ALL agents' calls, not just the authenticated extension
+  let callLogData;
+  try {
+    callLogData = await rcApiFetch(`/restapi/v1.0/account/~/call-log?${params}`);
+    console.log(`[INSIGHTS] Account-level call log: ${(callLogData.records||[]).length} total records`);
+  } catch (err) {
+    console.warn(`[INSIGHTS] Account-level failed, falling back to extension-level: ${err.message}`);
+    callLogData = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
+  }
+
   // Deduplicate: same session can appear as both PBX and RingCX — keep one per recordingId
   const seen = new Set();
-  const recordedCalls = (callLogs.records || []).filter(r => {
+  const recordedCalls = (callLogData.records || []).filter(r => {
     if (!r.recording) return false;
     if (seen.has(r.recording.id)) return false;
     seen.add(r.recording.id);
     return true;
   });
+  console.log(`[INSIGHTS] ${recordedCalls.length} unique recorded calls to process`);
 
   const results = [];
   for (const call of recordedCalls) {
@@ -103,8 +113,19 @@ async function fetchAllInsights(daysBack = 7) {
         exportedAt: new Date().toISOString(),
       });
     } catch (err) {
+      console.warn(`[INSIGHTS] rec=${call.recording.id.slice(-8)} insights failed: ${err.message}`);
+      // Still include the call with basic info so it appears in upload with what we know
       results.push({
         recordingId: call.recording.id,
+        callInfo: {
+          id: call.id, sessionId: call.sessionId, startTime: call.startTime,
+          duration: call.duration, direction: call.direction,
+          from: call.from, to: call.to, result: call.result,
+          extension: call.direction === 'Outbound'
+            ? (call.from?.name || null)
+            : (call.to?.name   || null),
+        },
+        insights: null,
         error: err.message,
         exportedAt: new Date().toISOString(),
       });

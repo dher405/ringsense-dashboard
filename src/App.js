@@ -1581,16 +1581,10 @@ function CallList() {
   const loadCalls = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      // Parse date strings manually to avoid Date constructor timezone ambiguity
-      // Creates local midnight/end-of-day, then converts to UTC for the RC API
-      const parseLocalDate = (str, endOfDay = false) => {
-        const [y, m, d] = str.split('-').map(Number);
-        const dt = new Date(y, m - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
-        return dt.toISOString();
-      };
-      const fromISO = parseLocalDate(dateFrom, false);
-      const toISO   = parseLocalDate(dateTo, true);
-      const data = await API.getCalls({ dateFrom: fromISO, dateTo: toISO });
+      // Send raw date strings + browser timezone offset to the server
+      // Server will shift them to correct UTC boundaries for the RC API
+      const tzOffset = new Date().getTimezoneOffset(); // minutes behind UTC (e.g. MDT = 360)
+      const data = await API.getCalls({ dateFrom, dateTo, tzOffset });
       setCalls(data.records || []);
       setCounts({ pbx: data.pbxCount || 0, rcx: data.rcxCount || 0 });
     } catch (err) {

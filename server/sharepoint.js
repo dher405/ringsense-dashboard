@@ -416,9 +416,13 @@ async function uploadToSharePointByAgent(calls) {
   const uploadTs = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   const baseFolder = (sp_folder_path || '/RingSense Exports').replace(/\/+$/, '');
 
-  // Group calls by agent name
+  // Group calls by agent name — skip records that failed insights fetch entirely
   const byAgent = {};
   for (const call of calls) {
+    if (call.error && !call.callInfo) {
+      console.warn(`[SHAREPOINT] Skipping rec=${call.recordingId} — no callInfo (insights error: ${call.error})`);
+      continue;
+    }
     const agent = resolveAgentName(call) || 'Unknown Agent';
     if (!byAgent[agent]) byAgent[agent] = [];
     byAgent[agent].push(call);
