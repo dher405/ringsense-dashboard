@@ -52,7 +52,14 @@ async function fetchAllInsights(daysBack = 7) {
   });
 
   const callLogs = await rcApiFetch(`/restapi/v1.0/account/~/extension/~/call-log?${params}`);
-  const recordedCalls = (callLogs.records || []).filter(r => r.recording);
+  // Deduplicate: same session can appear as both PBX and RingCX — keep one per recordingId
+  const seen = new Set();
+  const recordedCalls = (callLogs.records || []).filter(r => {
+    if (!r.recording) return false;
+    if (seen.has(r.recording.id)) return false;
+    seen.add(r.recording.id);
+    return true;
+  });
 
   const results = [];
   for (const call of recordedCalls) {

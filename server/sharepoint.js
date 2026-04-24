@@ -187,35 +187,59 @@ async function formatCallAsPdf(call) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
-    doc.on('data', c => chunks.push(c));
+    doc.on('data', chunk => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const info     = call.callInfo || call;
-    const insights = call.insights || call.ringSenseInsights || {};
-    const W        = doc.page.width - 100;
+    const info        = call.callInfo || call;
+    // Real RingSense API: top-level insights object contains nested .insights fields
+    const insightsObj  = call.insights || {};
+    const insightsData = insightsObj.insights || insightsObj; // handle both wrapped and flat
+    const speakerInfo  = insightsObj.speakerInfo || call.speakerInfo || [];
 
-    // Header bar
+    // Helper: resolve speakerId to display name using speakerInfo
+    const speakerName = (seg) => {
+      if (seg.name && !seg.name.startsWith('P-')) return seg.name;
+      const match = speakerInfo.find(s => s.speakerId === seg.speakerId);
+      if (match) return match.name || match.phoneNumber || seg.speakerId || 'Speaker';
+      return seg.name || seg.speakerId || 'Speaker';
+    };
+
+    // Real API field paths
+    const transcript  = insightsData.Transcript  || insightsData.transcript  || [];
+    const summaryRaw  = insightsData.Summary      || insightsData.BulletedSummary || insightsData.summary || insightsData.brief || null;
+    const highlights  = insightsData.Highlights   || insightsData.highlights  || [];
+    const nextSteps   = insightsData.NextSteps     || insightsData.nextSteps   || insightsData.actionItems || [];
+    const callNotes   = insightsData.CallNotes     || insightsData.callNotes   || insightsData.notes || null;
+    const aiScoreObj  = insightsData.AIScore       || insightsData.aiScore     || null;
+    const aiScore     = aiScoreObj
+      ? (typeof aiScoreObj === 'object' ? (aiScoreObj.value ?? aiScoreObj.score ?? null) : aiScoreObj)
+      : null;
+
+    const W = doc.page.width - 100;
+
+    // ── Header bar ──────────────────────────────────────────────────────────
     doc.rect(0, 0, doc.page.width, 72).fill('#FFFFFF');
     doc.rect(0, 70, doc.page.width, 2).fill('#E5E7EB');
     doc.fontSize(10).fillColor('#FF6B35').font('Helvetica-Bold').text('RingCentral', 50, 20);
     doc.rect(50, 32, 60, 2).fill('#FF6B35');
     doc.fontSize(7).fillColor('#6B7280').font('Helvetica').text('CONVERSATION INTELLIGENCE', 50, 37);
 
-    // Title
-    const fromObj   = info.from || {};
-    const toObj     = info.to   || {};
-    const direction = (info.direction || '').toLowerCase();
-    const fromName  = fromObj.phoneNumber || fromObj.name || 'Unknown';
-    const toName    = toObj.phoneNumber   || toObj.name   || 'Unknown';
+    // ── Title ───────────────────────────────────────────────────────────────
+    const fromObj    = info.from || {};
+    const toObj      = info.to   || {};
+    const direction  = (info.direction || insightsObj.callDirection || '').toLowerCase();
+    const fromName   = fromObj.phoneNumber || fromObj.name || 'Unknown';
+    const toName     = toObj.phoneNumber   || toObj.name   || 'Unknown';
     const otherParty = direction === 'outbound' ? toName : fromName;
     const title = `${direction === 'outbound' ? 'Outbound' : 'Inbound'} call with ${otherParty}`;
 
     doc.fontSize(22).fillColor('#111827').font('Helvetica-Bold').text(title, 50, 90, { width: W });
 
-    // Date/time
-    if (info.startTime) {
-      const d = new Date(info.startTime);
+    // ── Date/Time ───────────────────────────────────────────────────────────
+    const startRaw = info.startTime || insightsObj.recordingStartTime || null;
+    if (startRaw) {
+      const d = new Date(startRaw);
       if (!isNaN(d)) {
         const dateStr = d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
                       + ', ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
@@ -223,12 +247,18 @@ async function formatCallAsPdf(call) {
       }
     }
 
-    // Metadata
+    // ── Metadata ────────────────────────────────────────────────────────────
     doc.moveDown(0.8);
     const meta = [];
-    if (info.duration) { const d = parseInt(info.duration,10); meta.push(`Duration: ${Math.floor(d/60)}m ${d%60}s`); }
+    if (info.duration || insightsObj.recordingDurationMs) {
+      const d = info.duration
+        ? parseInt(info.duration, 10)
+        : Math.round(insightsObj.recordingDurationMs / 1000);
+      meta.push(`Duration: ${Math.floor(d/60)}m ${d%60}s`);
+    }
     if (info.result)    meta.push(`Result: ${info.result}`);
-    if (info.direction) meta.push(`Direction: ${info.direction}`);
+    if (info.direction || insightsObj.callDirection) meta.push(`Direction: ${info.direction || insightsObj.callDirection}`);
+    if (speakerInfo.length) meta.push(`Speakers: ${speakerInfo.map(s => s.name || s.phoneNumber).join(', ')}`);
     if (meta.length) {
       doc.fontSize(10).fillColor('#6B7280').font('Helvetica').text(meta.join('  ·  '), 50, doc.y, { width: W });
     }
@@ -236,92 +266,99 @@ async function formatCallAsPdf(call) {
     doc.rect(50, doc.y, W, 1).fill('#E5E7EB');
     doc.moveDown(0.8);
 
-    // Summary
-    if (insights.summary || insights.brief) {
+    // ── Summary ─────────────────────────────────────────────────────────────
+    if (summaryRaw) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Summary');
       doc.moveDown(0.3);
-      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(insights.summary || insights.brief, { width: W });
+      // Summary can be a string or array of bullet strings
+      const summaryText = Array.isArray(summaryRaw)
+        ? summaryRaw.map((item, i) => `${i+1}. ${typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))}`).join('\n')
+        : (typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw.text || summaryRaw.value || JSON.stringify(summaryRaw)));
+      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(summaryText, { width: W });
       doc.moveDown(0.8);
     }
 
-    // AI Score
-    const score = insights.aiScore !== undefined ? insights.aiScore : insights.score;
-    if (score !== undefined) {
-      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('AI Score');
+    // ── AI Score ─────────────────────────────────────────────────────────────
+    if (aiScore !== null && aiScore !== undefined) {
+      doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('AI Confidence Score');
       doc.moveDown(0.2);
-      doc.fontSize(22).fillColor('#FF6B35').font('Helvetica-Bold').text(String(score));
+      doc.fontSize(22).fillColor('#FF6B35').font('Helvetica-Bold').text(String(aiScore));
       doc.moveDown(0.8);
     }
 
-    // Highlights
-    const highlights = insights.highlights || insights.keyMoments || [];
-    if (highlights.length) {
+    // ── Highlights ───────────────────────────────────────────────────────────
+    const highlightArr = Array.isArray(highlights) ? highlights : (highlights ? [highlights] : []);
+    if (highlightArr.length) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Highlights');
       doc.moveDown(0.3);
-      highlights.forEach((h, i) => {
-        const t = typeof h === 'string' ? h : (h.text || h.content || JSON.stringify(h));
+      highlightArr.forEach((h, i) => {
+        const t = typeof h === 'string' ? h : (h.text || h.value || h.content || JSON.stringify(h));
         doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
       });
       doc.moveDown(0.8);
     }
 
-    // Next Steps
-    const nextSteps = insights.nextSteps || insights.actionItems || [];
-    if (nextSteps.length) {
+    // ── Next Steps ───────────────────────────────────────────────────────────
+    const nextArr = Array.isArray(nextSteps) ? nextSteps : (nextSteps ? [nextSteps] : []);
+    if (nextArr.length) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Next Steps');
       doc.moveDown(0.3);
-      nextSteps.forEach((s, i) => {
-        const t = typeof s === 'string' ? s : (s.text || s.content || JSON.stringify(s));
+      nextArr.forEach((s, i) => {
+        const t = typeof s === 'string' ? s : (s.text || s.value || s.content || JSON.stringify(s));
         doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
       });
       doc.moveDown(0.8);
     }
 
-    // Call Notes
-    if (insights.notes || insights.callNotes) {
+    // ── Call Notes ───────────────────────────────────────────────────────────
+    if (callNotes) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Call Notes');
       doc.moveDown(0.3);
-      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(insights.notes || insights.callNotes, { width: W });
+      const notesText = typeof callNotes === 'string' ? callNotes : (callNotes.text || callNotes.value || JSON.stringify(callNotes));
+      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(notesText, { width: W });
       doc.moveDown(0.8);
     }
 
-    // Transcript
-    const transcriptRaw = insights.transcript || insights.transcription || null;
-    const entries = transcriptRaw
-      ? (Array.isArray(transcriptRaw) ? transcriptRaw : (transcriptRaw.entries || transcriptRaw.utterances || []))
-      : [];
-
-    if (entries.length) {
+    // ── Transcript ───────────────────────────────────────────────────────────
+    const transcriptArr = Array.isArray(transcript) ? transcript : [];
+    if (transcriptArr.length) {
       doc.rect(50, doc.y, W, 1).fill('#E5E7EB');
       doc.moveDown(0.8);
-      entries.forEach(entry => {
-        const speaker = entry.speaker || entry.name || entry.speakerId || 'Speaker';
-        const text    = entry.text || entry.content || entry.message || '';
-        const ts      = fmtTs(entry.startTime);
+      transcriptArr.forEach(seg => {
+        const speaker = speakerName(seg);
+        const text    = seg.text || seg.value || seg.transcript || '';
+        const ts      = fmtTs(seg.startTime !== undefined ? seg.startTime
+                              : (seg.startTimeMs !== undefined ? seg.startTimeMs / 1000 : undefined));
         const role    = getSpeakerRole(speaker);
         const col     = ROLE_COLORS[role] || ROLE_COLORS.agent;
         const label   = role.charAt(0).toUpperCase() + role.slice(1);
+
         if (doc.y > doc.page.height - 120) doc.addPage();
         const rowY = doc.y;
+
         // Role badge
         doc.roundedRect(50, rowY, 46, 14, 7).fill(col.bg);
         doc.fontSize(7).fillColor(col.text).font('Helvetica-Bold')
            .text(label.toUpperCase(), 50, rowY + 3, { width: 46, align: 'center', lineBreak: false });
+
         // Speaker name
         doc.fontSize(11).fillColor('#111827').font('Helvetica-Bold')
            .text(speaker, 102, rowY + 1, { width: W - 52 - 55, lineBreak: false });
+
         // Timestamp
         if (ts) {
           doc.fontSize(10).fillColor('#6B7280').font('Helvetica')
              .text(ts, 50, rowY + 1, { width: W, align: 'right', lineBreak: false });
         }
-        // Text
+
+        // Utterance text
         doc.fontSize(11).fillColor('#374151').font('Helvetica')
            .text(text, 50, rowY + 18, { width: W });
         doc.moveDown(0.5);
       });
-    } else if (typeof transcriptRaw === 'string' && transcriptRaw) {
-      doc.fontSize(11).fillColor('#374151').font('Helvetica').text(transcriptRaw, { width: W });
+    } else {
+      // No transcript — note it
+      doc.fontSize(11).fillColor('#9CA3AF').font('Helvetica').text('No transcript available for this recording.', { width: W });
     }
 
     doc.end();
