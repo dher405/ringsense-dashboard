@@ -1567,18 +1567,29 @@ function CallList() {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0]; });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const toLocalDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return toLocalDateStr(d); });
+  const [dateTo, setDateTo] = useState(() => toLocalDateStr(new Date()));
   const [searchQuery, setSearchQuery] = useState('');
   const [counts, setCounts] = useState({ pbx: 0, rcx: 0 });
 
   const loadCalls = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      // Use local-time boundaries to avoid UTC-offset date bleed
-      // "2026-04-22" → start of that day in local time, not UTC midnight
-      const fromISO = new Date(dateFrom + 'T00:00:00').toISOString();
-      const toISO   = new Date(dateTo   + 'T23:59:59').toISOString();
+      // Parse date strings manually to avoid Date constructor timezone ambiguity
+      // Creates local midnight/end-of-day, then converts to UTC for the RC API
+      const parseLocalDate = (str, endOfDay = false) => {
+        const [y, m, d] = str.split('-').map(Number);
+        const dt = new Date(y, m - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+        return dt.toISOString();
+      };
+      const fromISO = parseLocalDate(dateFrom, false);
+      const toISO   = parseLocalDate(dateTo, true);
       const data = await API.getCalls({ dateFrom: fromISO, dateTo: toISO });
       setCalls(data.records || []);
       setCounts({ pbx: data.pbxCount || 0, rcx: data.rcxCount || 0 });
