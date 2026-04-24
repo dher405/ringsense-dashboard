@@ -9,7 +9,6 @@ const STORE_PATH = path.join(DATA_DIR, 'config.enc.json');
 const SENSITIVE_FIELDS = [
   'rc_client_secret',
   'rc_jwt',
-  'anthropic_api_key',
   'rc_access_token',
   'rc_refresh_token',
   'sftp_password',
