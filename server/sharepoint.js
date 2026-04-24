@@ -205,24 +205,45 @@ async function formatCallAsPdf(call) {
       return seg.name || seg.speakerId || 'Speaker';
     };
 
-    // Real API field paths
+    // Real API field paths — all insight fields are arrays of {value, start, end, speakerId?}
     const transcript  = insightsData.Transcript  || insightsData.transcript  || [];
-    const summaryRaw  = insightsData.Summary      || insightsData.BulletedSummary || insightsData.summary || insightsData.brief || null;
-    // Exhaustive field name variants — RingSense API may use any of these
-    const highlights = insightsData.Highlights   || insightsData.highlights   ||
-                       insightsData.KeyMoments   || insightsData.keyMoments   ||
-                       insightsData.Moments      || insightsData.moments      || [];
-    const nextSteps  = insightsData.NextSteps    || insightsData.nextSteps    ||
-                       insightsData.ActionItems  || insightsData.actionItems  ||
-                       insightsData.Actions      || insightsData.actions      ||
-                       insightsData.next_steps   || insightsData.action_items || [];
-    const callNotes  = insightsData.CallNotes    || insightsData.callNotes    ||
-                       insightsData.Notes        || insightsData.notes        ||
-                       insightsData.call_notes   || null;
-    const aiScoreObj  = insightsData.AIScore       || insightsData.aiScore     || null;
-    const aiScore     = aiScoreObj
-      ? (typeof aiScoreObj === 'object' ? (aiScoreObj.value ?? aiScoreObj.score ?? null) : aiScoreObj)
-      : null;
+
+    // Summary: array of {value} OR plain string
+    const summaryRaw  = insightsData.Summary || insightsData.BulletedSummary || insightsData.summary || insightsData.brief || null;
+    const summaryText = !summaryRaw ? null
+      : Array.isArray(summaryRaw)
+        ? summaryRaw.map(s => typeof s === 'string' ? s : (s.value || s.text || '')).filter(Boolean).join(' ')
+        : (typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw.value || summaryRaw.text || JSON.stringify(summaryRaw)));
+
+    // Highlights: array of {value, speakerId} objects
+    const highlightsRaw = insightsData.Highlights || insightsData.HighLights || insightsData.highlights ||
+                          insightsData.KeyMoments || insightsData.keyMoments || insightsData.Moments || [];
+    const highlights = Array.isArray(highlightsRaw)
+      ? highlightsRaw.map(h => typeof h === 'string' ? h : (h.value || h.text || '')).filter(Boolean)
+      : [];
+
+    // NextSteps: array of {value, speakerId} objects
+    const nextStepsRaw = insightsData.NextSteps || insightsData.nextSteps ||
+                         insightsData.ActionItems || insightsData.actionItems ||
+                         insightsData.next_steps  || insightsData.action_items || [];
+    const nextSteps = Array.isArray(nextStepsRaw)
+      ? nextStepsRaw.map(s => typeof s === 'string' ? s : (s.value || s.text || '')).filter(Boolean)
+      : [];
+
+    // CallNotes: string, array, or object — only when AI Notes enabled during call
+    const callNotesRaw = insightsData.CallNotes || insightsData.callNotes || insightsData.Notes || insightsData.notes || null;
+    const callNotes = !callNotesRaw ? null
+      : (typeof callNotesRaw === 'string' ? callNotesRaw
+        : Array.isArray(callNotesRaw)
+          ? callNotesRaw.map(n => typeof n === 'string' ? n : (n.value || n.text || '')).filter(Boolean).join('\n')
+          : (callNotesRaw.value || callNotesRaw.text || JSON.stringify(callNotesRaw)));
+
+    // AIScore: [{value: "7"}] array — extract first value
+    const aiScoreRaw = insightsData.AIScore || insightsData.aiScore || null;
+    const aiScore = !aiScoreRaw ? null
+      : Array.isArray(aiScoreRaw) && aiScoreRaw.length > 0
+        ? (aiScoreRaw[0].value ?? aiScoreRaw[0].score ?? null)
+        : (typeof aiScoreRaw === 'object' ? (aiScoreRaw.value ?? aiScoreRaw.score ?? null) : aiScoreRaw);
 
     const W = doc.page.width - 100;
 
@@ -275,13 +296,9 @@ async function formatCallAsPdf(call) {
     doc.moveDown(0.8);
 
     // ── Summary ─────────────────────────────────────────────────────────────
-    if (summaryRaw) {
+    if (summaryText) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Summary');
       doc.moveDown(0.3);
-      // Summary can be a string or array of bullet strings
-      const summaryText = Array.isArray(summaryRaw)
-        ? summaryRaw.map((item, i) => `${i+1}. ${typeof item === 'string' ? item : (item.text || item.value || JSON.stringify(item))}`).join('\n')
-        : (typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw.text || summaryRaw.value || JSON.stringify(summaryRaw)));
       doc.fontSize(11).fillColor('#374151').font('Helvetica').text(summaryText, { width: W });
       doc.moveDown(0.8);
     }
@@ -295,25 +312,21 @@ async function formatCallAsPdf(call) {
     }
 
     // ── Highlights ───────────────────────────────────────────────────────────
-    const highlightArr = Array.isArray(highlights) ? highlights : (highlights ? [highlights] : []);
-    if (highlightArr.length) {
+    if (highlights.length) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Highlights');
       doc.moveDown(0.3);
-      highlightArr.forEach((h, i) => {
-        const t = typeof h === 'string' ? h : (h.text || h.value || h.content || JSON.stringify(h));
-        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
+      highlights.forEach((h, i) => {
+        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${h}`, { width: W });
       });
       doc.moveDown(0.8);
     }
 
     // ── Next Steps ───────────────────────────────────────────────────────────
-    const nextArr = Array.isArray(nextSteps) ? nextSteps : (nextSteps ? [nextSteps] : []);
-    if (nextArr.length) {
+    if (nextSteps.length) {
       doc.fontSize(13).fillColor('#111827').font('Helvetica-Bold').text('Next Steps');
       doc.moveDown(0.3);
-      nextArr.forEach((s, i) => {
-        const t = typeof s === 'string' ? s : (s.text || s.value || s.content || JSON.stringify(s));
-        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${t}`, { width: W });
+      nextSteps.forEach((s, i) => {
+        doc.fontSize(11).fillColor('#374151').font('Helvetica').text(`${i+1}. ${s}`, { width: W });
       });
       doc.moveDown(0.8);
     }

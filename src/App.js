@@ -1755,10 +1755,33 @@ function CallDetail() {
   const fmtDur = (ms) => { if(!ms)return'N/A'; const t=Math.floor(ms/1000); return `${Math.floor(t/60)}m ${t%60}s`; };
 
   const getTranscript = () => insights?.insights?.Transcript || [];
-  const getSummary = () => insights?.insights?.Summary || insights?.insights?.BulletedSummary || null;
-  const getHighlights = () => insights?.insights?.Highlights || null;
-  const getNextSteps = () => insights?.insights?.NextSteps || null;
-  const getAIScore = () => insights?.insights?.AIScore || null;
+  // Summary is array of {value} objects — flatten to plain string for display
+  const getSummary = () => {
+    const raw = insights?.insights?.Summary || insights?.insights?.BulletedSummary || null;
+    if (!raw) return null;
+    if (Array.isArray(raw)) return raw.map(s => typeof s === 'string' ? s : (s.value || s.text || '')).filter(Boolean).join(' ');
+    return typeof raw === 'string' ? raw : (raw.value || raw.text || null);
+  };
+  // Highlights/NextSteps are arrays of {value, speakerId} — extract value strings
+  const getHighlights = () => {
+    const raw = insights?.insights?.Highlights || insights?.insights?.HighLights || null;
+    if (!raw) return null;
+    if (Array.isArray(raw)) return raw.map(h => typeof h === 'string' ? h : (h.value || h.text || '')).filter(Boolean);
+    return [typeof raw === 'string' ? raw : (raw.value || raw.text || JSON.stringify(raw))];
+  };
+  const getNextSteps = () => {
+    const raw = insights?.insights?.NextSteps || null;
+    if (!raw) return null;
+    if (Array.isArray(raw)) return raw.map(s => typeof s === 'string' ? s : (s.value || s.text || '')).filter(Boolean);
+    return [typeof raw === 'string' ? raw : (raw.value || raw.text || JSON.stringify(raw))];
+  };
+  // AIScore is [{value: "7"}] — extract first value
+  const getAIScore = () => {
+    const raw = insights?.insights?.AIScore || null;
+    if (!raw) return null;
+    if (Array.isArray(raw) && raw.length > 0) return raw[0];
+    return raw;
+  };
   const getCallNotes = () => insights?.insights?.CallNotes || null;
 
   if (loading) return <div className="main-content"><div className="loading-state"><div className="spinner-lg"/><p>Loading RingSense insights...</p></div></div>;
