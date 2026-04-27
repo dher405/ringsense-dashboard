@@ -73,6 +73,7 @@ async function fetchAllInsights(daysBack = 7) {
   console.log(`[INSIGHTS] ${recordedCalls.length} unique recorded calls to process`);
 
   const results = [];
+  const config = getConfig();
   for (const call of recordedCalls) {
     try {
       const insights = await rcApiFetch(
@@ -83,8 +84,11 @@ async function fetchAllInsights(daysBack = 7) {
       const nestedKeys  = Object.keys((insights || {}).insights || {});
       console.log(`[INSIGHTS] rec=${call.recording.id.slice(-8)} top=[${insightKeys.join(',')}] nested=[${nestedKeys.join(',')}]`);
 
-      // Translate any non-English content to English before export
-      const translatedInsights = await translateInsights(insights);
+      // Translate non-English content only if translation is enabled (default: on)
+      const shouldTranslate = config.sp_translate !== 'false';
+      const translatedInsights = shouldTranslate
+        ? await translateInsights(insights)
+        : insights;
 
       results.push({
         recordingId: call.recording.id,

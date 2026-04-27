@@ -356,6 +356,7 @@ function SettingsPage() {
     sp_folder_path: '/RingSense Exports',
     sp_use_sso_creds: 'true',
     sp_export_format: 'zip_txt',
+    sp_translate: 'true',
     schedule_sftp_enabled: 'true',
     schedule_sharepoint_enabled: 'true',
     smtp_host: '',
@@ -406,6 +407,7 @@ function SettingsPage() {
         sp_folder_path: data.sp_folder_path || '/RingSense Exports',
         sp_use_sso_creds: data.sp_use_sso_creds || 'true',
         sp_export_format: data.sp_export_format || 'zip_txt',
+        sp_translate: data.sp_translate !== undefined ? data.sp_translate : 'true',
         schedule_sftp_enabled: data.schedule_sftp_enabled || 'true',
         schedule_sharepoint_enabled: data.schedule_sharepoint_enabled || 'true',
         smtp_host: data.smtp_host || '',
@@ -973,6 +975,26 @@ function SettingsPage() {
                 </span>
               </div>
 
+              <div className="form-group">
+                <label>Language</label>
+                <div style={{display:'flex', alignItems:'center', gap:12}}>
+                  <div className={`toggle-switch ${form.sp_translate === 'true' ? 'on' : ''}`}
+                    onClick={() => updateField('sp_translate', form.sp_translate === 'true' ? 'false' : 'true')}>
+                    <div className="toggle-knob" />
+                  </div>
+                  <div>
+                    <div style={{fontSize:14, fontWeight:500, color:'var(--color-text-primary)'}}>
+                      {form.sp_translate === 'true' ? 'Translate to English' : 'Keep native language'}
+                    </div>
+                    <div style={{fontSize:12, color:'var(--color-text-secondary)', marginTop:2}}>
+                      {form.sp_translate === 'true'
+                        ? 'Non-English content (e.g. Spanish) will be automatically translated to English before export.'
+                        : 'Call content will be exported in its original language without translation.'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="form-actions-row">
                 <button className="btn btn-primary" onClick={async () => {
                   setSaving(true);
@@ -983,6 +1005,7 @@ function SettingsPage() {
                       sp_folder_path: form.sp_folder_path,
                       sp_use_sso_creds: form.sp_use_sso_creds,
                       sp_export_format: form.sp_export_format,
+                      sp_translate: form.sp_translate,
                     };
                     if (form.sp_use_sso_creds !== 'true') {
                       updates.sp_tenant_id = form.sp_tenant_id;
