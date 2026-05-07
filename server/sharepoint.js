@@ -3,6 +3,22 @@ const { getConfig, setConfig } = require('./store');
 // ─── Helper: pad a number with leading zeros ──────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0'); }
 
+// ─── Format a date in US Eastern time (auto-handles EST/EDT) ─────────────────
+function toEastern(date) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
+  return {
+    year: parts.year, month: parts.month, day: parts.day,
+    hour: parts.hour === '24' ? '00' : parts.hour,
+    minute: parts.minute, second: parts.second,
+  };
+}
+
 // ─── Helper: sanitize a string for use in a filename ─────────────────
 function sanitizeForFilename(s) {
   const str = (s !== null && s !== undefined && typeof s !== 'object') ? String(s) : 'unknown';
@@ -27,8 +43,9 @@ function buildCallFilename(call) {
   if (raw) {
     const d = new Date(raw);
     if (!isNaN(d)) {
-      datePart = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-      timePart = `${pad(d.getHours())}${pad(d.getMinutes())}`;
+      const et = toEastern(d);
+      datePart = `${et.year}${et.month}${et.day}`;
+      timePart = `${et.hour}${et.minute}`;
     }
   }
   const from = sanitizeForFilename(resolveParty(info.from) || info.callerNumber || info.callingNumber);
@@ -413,7 +430,8 @@ async function uploadToSharePointByAgent(calls) {
 
   // Build upload timestamp once for all files in this batch
   const now = new Date();
-  const uploadTs = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const et = toEastern(now);
+  const uploadTs = `${et.year}-${et.month}-${et.day} ${et.hour}-${et.minute}-${et.second}`;
   const baseFolder = (sp_folder_path || '/RingSense Exports').replace(/\/+$/, '');
 
   // Group calls by agent name — skip records that failed insights fetch entirely
